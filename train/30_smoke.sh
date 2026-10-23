@@ -74,7 +74,7 @@ for name in ("yolo11n-strong", "yolo11n-p2", "yolo11n-spd", "yolo11n-ema", "yolo
 # 权重迁移计数（P3）：比较官方 yolo11n.pt 与自定义 yaml 的同名同形张量数
 try:
     base = YOLO("yolo11n.pt").model.state_dict()
-    m = YOLO("ultralytics_ext/yaml/yolo11n-strong.yaml")
+    m = YOLO("ultralytics_ext/yaml/strong/yolo11n.yaml")
     m.load("yolo11n.pt")
     tgt = m.model.state_dict()
     matched = intersect_dicts(base, tgt)
