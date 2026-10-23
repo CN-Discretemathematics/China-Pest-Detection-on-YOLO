@@ -25,7 +25,7 @@ mkdir -p "${RUNS}" "${LOGS}"
 EPOCHS="${EPOCHS:-200}"
 IMGSZ="${IMGSZ:-640}"
 BATCH="${BATCH:-48}"
-STRONG="ultralytics_ext/yaml/yolo11n-strong.yaml"
+STRONG="ultralytics_ext/yaml/strong/yolo11n.yaml"
 
 # 定稿组：默认用 T3 的全量组合；可用 FINAL_ENV 覆盖
 FINAL_NAME="${FINAL_NAME:-strong_ADEA}"
