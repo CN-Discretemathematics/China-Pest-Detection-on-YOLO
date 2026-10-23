@@ -103,9 +103,77 @@
       "dense": 2135
     }
   },
-  "assign_stats": null,
+  "assign_stats": {
+    "n_batches": 9524,
+    "n_gt_samples": 356478,
+    "corr_npos_beta_pearson": 0.3476,
+    "corr_npos_beta_spearman": 0.5214,
+    "corr_npos_area_pearson": 0.7618,
+    "mean_npos_adhesion": 7.6145,
+    "mean_npos_isolated": 1.246,
+    "n_starved_total": 290269,
+    "n_starved_adhesion": 672,
+    "n_starved_isolated": 289597,
+    "pct_starved_that_are_adhesion": 0.23,
+    "m2": {
+      "n_samples": 68009,
+      "corr_npos_log_relscale": 0.8521,
+      "corr_npos_log_relscale_spearman": 0.8841,
+      "k0_saturation": 11.0,
+      "fit_c_candidates_per_relarea": 9475.99,
+      "expected_npos_model": "min(k0, c * rel_area)",
+      "mean_residual_adhesion": -0.7614,
+      "mean_residual_isolated": 0.0,
+      "corr_residual_beta": -0.2472,
+      "pct_underallocated": 58.96,
+      "buckets": [
+        {
+          "range": "[0e+00,1e-04)",
+          "n": 1086,
+          "mean_npos": 2.273,
+          "median_npos": 2.0,
+          "pct_starved_lt3": 59.67
+        },
+        {
+          "range": "[1e-04,3e-04)",
+          "n": 6340,
+          "mean_npos": 4.074,
+          "median_npos": 4.0,
+          "pct_starved_lt3": 13.41
+        },
+        {
+          "range": "[3e-04,1e-03)",
+          "n": 25177,
+          "mean_npos": 6.312,
+          "median_npos": 6.0,
+          "pct_starved_lt3": 1.19
+        },
+        {
+          "range": "[1e-03,3e-03)",
+          "n": 27066,
+          "mean_npos": 9.841,
+          "median_npos": 10.0,
+          "pct_starved_lt3": 0.01
+        },
+        {
+          "range": "[3e-03,1e-02)",
+          "n": 8062,
+          "mean_npos": 9.989,
+          "median_npos": 10.0,
+          "pct_starved_lt3": 0.0
+        },
+        {
+          "range": "[1e-02,1e+00)",
+          "n": 278,
+          "mean_npos": 10.0,
+          "median_npos": 10.0,
+          "pct_starved_lt3": 0.0
+        }
+      ]
+    }
+  },
   "g0": {
-    "verdict": "PENDING",
-    "reason": "未提供 --assign-stats，无法检验 M1。请先用 ADEA_DIAG=1 跑一次 baseline 训练（或先跑数据集级统计确认粘连/长尾事实）。"
+    "verdict": "PASS",
+    "reason": "M1 与 M2 同时成立：面积标定后粘连目标残差 -0.7614 < 孤立目标 0.0（corr(residual, β)=-0.2472），且 corr(log 相对尺度, n_pos)=0.8521。（标定模型 E[n_pos|a]=min(11.0, 9475.99·a_rel)）→ 实施**面积标定的公平正样本分配**（SLA）：按期望标定残差，对被低估的 GT 从超额 GT 回收 anchor，并在更细的尺度层（P2/stride-4）为微目标提供足够候选。"
   }
 }

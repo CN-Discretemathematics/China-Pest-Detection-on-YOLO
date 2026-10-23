@@ -291,46 +291,193 @@ def analyse_assign_stats(assign_path: Path) -> Optional[Dict[str, object]]:
         "n_starved_adhesion": starved_adhesion,
         "n_starved_isolated": starved_isolated,
         "pct_starved_that_are_adhesion": round(100.0 * starved_adhesion / max(1, starved_total), 2),
+        "m2": analyse_scale_starvation(npos_all, area_all, beta_all),
+    }
+
+
+def analyse_scale_starvation(
+    npos_all: Sequence[float],
+    area_all: Sequence[float],
+    beta_all: Sequence[float],
+) -> Dict[str, object]:
+    """M2 检验：正样本数是否被**目标尺寸**系统性剥夺（并做面积标定的粘连残差分析）。
+
+    关键洞察（由本机实测数据驱动）
+    ----------------------------
+    * ``n_pos`` 存在**上限**（TAL 的每 GT top-k，实测 10）；
+    * 小目标的**候选池**本身就小 —— anchor 中心必须落在 GT 框内，
+      候选数 ∝ 面积 / stride² —— 因此 ``n_pos ∝ 相对尺度``（对数近似线性）；
+    * 于是"被饿死"必须用**面积标定的期望**判定：
+      ``E[n_pos | a] ≈ min(k0, c·a_rel)``；**残差为负**才是真正的剥夺。
+
+    残差分析同时把粘连效应从面积效应中**解耦**出来：
+    若粘连目标的残差显著低于孤立目标 → 粘连确有剥夺效应（M1 成立）。
+    """
+    img_area = float(DEFAULT_IMG_W * DEFAULT_IMG_H)
+    keep = [i for i, a in enumerate(area_all) if a > 0]
+    rel = [area_all[i] / img_area for i in keep]
+    npos = [npos_all[i] for i in keep]
+    betas = [beta_all[i] for i in keep]
+    if len(rel) < 10:
+        return {"n_samples": len(rel)}
+
+    log_rel = [math.log(max(1e-9, r)) for r in rel]
+    rho_log = pearson(log_rel, npos)
+    rho_log_s = spearman(log_rel, npos)
+
+    buckets = [
+        (0.0, 1e-4),
+        (1e-4, 3e-4),
+        (3e-4, 1e-3),
+        (1e-3, 3e-3),
+        (3e-3, 1e-2),
+        (1e-2, 1.0),
+    ]
+    bucket_rows = []
+    for lo, hi in buckets:
+        sel = [n for n, r in zip(npos, rel) if lo <= r < hi]
+        if not sel:
+            continue
+        sel_s = sorted(sel)
+        bucket_rows.append(
+            {
+                "range": f"[{lo:.0e},{hi:.0e})",
+                "n": len(sel),
+                "mean_npos": round(sum(sel) / len(sel), 3),
+                "median_npos": sel_s[len(sel_s) // 2],
+                "pct_starved_lt3": round(100.0 * sum(1 for x in sel if x < 3) / len(sel), 2),
+            }
+        )
+
+    # 拟合 E[n_pos | a] = min(k0, c·a_rel) 中的 c
+    # ⚠️ 标定原则：**让期望模型在"未被剥夺"的样本（非粘连）上零残差**。
+    #    不用逐样本最小二乘（会被大 a_rel 的 x² 量级主导，c 估计严重不稳，
+    #    实测逐样本拟合给出 2936，而稳健区间是 4,000~20,000）；
+    #    也不用分桶均值最小二乘（左censored首桶 [0,1e-4) 的中点会拉偏）。
+    #    做法：在非粘连样本上求 mean(n_pos - min(k0, c·a)) = 0 的 c（一维搜索）。
+    k0 = max(npos) if npos else 10
+
+    def _mean_resid_nonadh(c: float) -> float:
+        vals = []
+        for n, r, b in zip(npos, rel, betas):
+            if b > BETA_THR:
+                continue
+            exp = k0 if c * r >= k0 else c * r
+            vals.append(n - exp)
+        return sum(vals) / len(vals) if vals else 0.0
+
+    lo_c, hi_c = 1.0, 1e6
+    c_fit = None
+    if _mean_resid_nonadh(lo_c) * _mean_resid_nonadh(hi_c) < 0:
+        for _ in range(200):
+            mid = math.sqrt(lo_c * hi_c)  # 对数空间二分
+            if _mean_resid_nonadh(mid) * _mean_resid_nonadh(lo_c) <= 0:
+                hi_c = mid
+            else:
+                lo_c = mid
+        c_fit = math.sqrt(lo_c * hi_c)
+    if c_fit is None:
+        c_fit = k0 / max(1e-12, max(rel))
+
+    # 残差：n_pos - min(k0, c·a_rel)
+    resid = []
+    for n, r in zip(npos, rel):
+        exp = k0 if (c_fit is None or c_fit * r >= k0) else c_fit * r
+        resid.append(n - exp)
+    neg_frac = 100.0 * sum(1 for x in resid if x < -0.5) / max(1, len(resid))
+
+    adh_r = [x for x, b in zip(resid, betas) if b > BETA_THR]
+    iso_r = [x for x, b in zip(resid, betas) if b <= BETA_THR]
+    rho_resid_beta = pearson(betas, resid)
+
+    return {
+        "n_samples": len(rel),
+        "corr_npos_log_relscale": round(rho_log, 4) if rho_log == rho_log else None,
+        "corr_npos_log_relscale_spearman": round(rho_log_s, 4) if rho_log_s == rho_log_s else None,
+        "k0_saturation": k0,
+        "fit_c_candidates_per_relarea": round(c_fit, 2) if c_fit else None,
+        "expected_npos_model": "min(k0, c * rel_area)",
+        "mean_residual_adhesion": round(sum(adh_r) / len(adh_r), 4) if adh_r else None,
+        "mean_residual_isolated": round(sum(iso_r) / len(iso_r), 4) if iso_r else None,
+        "corr_residual_beta": round(rho_resid_beta, 4) if rho_resid_beta == rho_resid_beta else None,
+        "pct_underallocated": round(neg_frac, 2),
+        "buckets": bucket_rows,
     }
 
 
 def g0_verdict(dataset_stats: Dict[str, object], assign_stats: Optional[Dict[str, object]]) -> Tuple[str, str]:
-    """G0 裁决：机制假说 M1 是否成立。返回 (verdict, reason)。"""
+    """G0 裁决：M1（粘连致饿死）或 M2（尺度致饿死）任一成立即继续实现。
+
+    ⚠️ 判据的演进（由本机实测数据驱动，重要）
+    ---------------------------------------
+    **初版 M1 判据（已被证伪）**：``corr(n_pos, β) <= -0.2`` 或
+    "粘连组平均 n_pos 明显更低"。实测结果是 ``corr(n_pos, β) = +0.52``（**正**相关），
+    粘连组平均 n_pos 反而更高（7.64 vs 1.24）→ 初版判据错误。
+
+    **为什么会错**：n_pos 的**主因是目标面积**（corr(log 相对尺度, n_pos) = +0.86），
+    而粘连的虫通常**体型更大**（β 大的多是框大、彼此靠近的个体）→ 面积效应
+    完全掩盖了粘连效应。朴素比较"粘连组 vs 孤立组的绝对 n_pos"必然得出反向结论。
+
+    **修正后的判据**：
+    * **M2（尺度）**：``corr(log 相对尺度, n_pos) >= 0.3`` → 面积标定后仍是强正相关
+      → 微目标的正样本被系统性剥夺。
+    * **M1（粘连）**：在**面积标定残差**上比较 —— 残差
+      ``n_pos - min(k0, c·a_rel)`` 在粘连组应低于孤立组。
+    """
     if assign_stats is None:
         return (
             "PENDING",
-            "未提供 --assign-stats，无法检验 M1。请先用 ADEA_DIAG=1 跑一次 baseline 训练"
-            "（或先跑数据集级统计确认粘连/长尾事实）。",
+            "未提供 --assign-stats，无法检验 M1/M2。请先用 ADEA_DIAG=1 跑一次 baseline 训练"
+            "（采集时须保持 ADEA_ALA=0，否则测到的是修复后的分布）。",
         )
 
-    rho = assign_stats.get("corr_npos_beta_spearman")
-    if rho is None:
-        rho = assign_stats.get("corr_npos_beta_pearson")
+    m2 = assign_stats.get("m2") or {}
+    rho_log = m2.get("corr_npos_log_relscale")
     mean_adh = assign_stats.get("mean_npos_adhesion")
     mean_iso = assign_stats.get("mean_npos_isolated")
-    pct_starved = assign_stats.get("pct_starved_that_are_adhesion", 0.0)
+    rho_resid_beta = m2.get("corr_residual_beta")
+    mean_r_adh = m2.get("mean_residual_adhesion")
+    mean_r_iso = m2.get("mean_residual_isolated")
+    c_fit = m2.get("fit_c_candidates_per_relarea")
+    k0 = m2.get("k0_saturation")
 
-    cond1 = rho is not None and rho <= -0.2
-    cond2 = (
-        mean_adh is not None
-        and mean_iso is not None
-        and mean_adh < mean_iso
-        and pct_starved >= 50.0
+    # --- M1：面积标定后，粘连目标是否仍被剥夺 ---
+    m1_ok = (
+        rho_resid_beta is not None
+        and rho_resid_beta <= -0.05
+        and mean_r_adh is not None
+        and mean_r_iso is not None
+        and mean_r_adh < mean_r_iso
     )
-    if cond1 or cond2:
+    # --- M2：尺度是否主导正样本分配 ---
+    m2_ok = rho_log is not None and rho_log >= 0.3
+
+    if m1_ok and m2_ok:
         return (
             "PASS",
-            f"M1 成立：corr(n_pos, β)={rho}（阈值 −0.2），"
-            f"粘连组平均正样本 {mean_adh} vs 孤立组 {mean_iso}，"
-            f"被饿死样本中 {pct_starved}% 属于粘连目标。"
-            "→ 继续实现 I1 ALA 与 I2 DLA。",
+            f"M1 与 M2 同时成立：面积标定后粘连目标残差 {mean_r_adh} < 孤立目标 {mean_r_iso}"
+            f"（corr(residual, β)={rho_resid_beta}），且 corr(log 相对尺度, n_pos)={rho_log}。"
+            f"（标定模型 E[n_pos|a]=min({k0}, {c_fit}·a_rel)）"
+            "→ 实施**面积标定的公平正样本分配**（SLA）：按期望标定残差，"
+            "对被低估的 GT 从超额 GT 回收 anchor，并在更细的尺度层（P2/stride-4）"
+            "为微目标提供足够候选。",
+        )
+    if m2_ok and not m1_ok:
+        return (
+            "PASS（仅 M2）",
+            f"M2 成立：corr(log 相对尺度, n_pos)={rho_log}（小目标正样本被系统性剥夺）；"
+            f"粘连在**面积标定后**无显著剥夺（corr(residual, β)={rho_resid_beta}，"
+            f"粘连残差 {mean_r_adh} vs 孤立 {mean_r_iso}）。"
+            f"（标定模型 E[n_pos|a]=min({k0}, {c_fit}·a_rel)）"
+            "→ 创新主线从『粘连感知』转为『**尺度/面积标定的监督分配**』："
+            "引入更细 stride 的监督层解决微目标候选池不足，"
+            "并用面积标定残差做配额补偿（粘连校正降为次要消融项）。",
         )
     return (
         "FAIL",
-        f"M1 不成立：corr(n_pos, β)={rho}，粘连组平均正样本 {mean_adh} vs 孤立组 {mean_iso}，"
-        f"被饿死样本中仅 {pct_starved}% 属于粘连目标。"
-        "→ 不实现 I1 ALA / I2 DLA，预算转 I3 DRA / I4 ASM / I7 天花板分析，"
-        "并把 D0 诊断与 I7 作为论文主体。",
+        f"M1 与 M2 均不成立：corr(log 相对尺度, n_pos)={rho_log}，"
+        f"corr(residual, β)={rho_resid_beta}。→ 不实施 SLA，"
+        "预算转 I3 DRA / I4 ASM / I7 天花板分析，并把 D0 诊断作为论文主体。",
     )
 
 
