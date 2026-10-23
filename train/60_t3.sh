@@ -77,6 +77,12 @@ run () {
     --out "${ROOT}/artifacts/eval" --run-name "${name}" \
     --imgsz "${IMGSZ}" --batch "${BATCH}" --device 0 --workers 8 --seed "${SEED}" \
     2>&1 | tee "${LOGS}/60_t3_subsets_${name}.log" | grep -E "^\[eval\]" || true
+  # 按目标尺寸分档的 AP（COCO 口径 AP_S/AP_M/AP_L）—— 尺度公平主张的标准指标
+  python scripts/eval_ap_by_size.py \
+    --model "${RUNS}/${name}/weights/best.pt" --data "${DATA}" --split "${EVAL_SPLIT}" \
+    --out "${ROOT}/artifacts/eval" --run-name "${name}" \
+    --imgsz "${IMGSZ}" --batch "${BATCH}" --device 0 --workers 8 \
+    2>&1 | tee "${LOGS}/60_t3_apsize_${name}.log" | grep -E "^\[ap\]" || true
 }
 
 if [ "${G0_VERDICT}" = "FAIL" ] || [ "${G0_VERDICT}" = "PENDING" ]; then

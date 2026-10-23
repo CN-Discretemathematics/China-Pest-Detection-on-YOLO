@@ -126,6 +126,13 @@ def merge_eval_json(items: List[Dict[str, object]], eval_dir: Optional[Path]) ->
             ("subset_dense", ("subset_dense",)),
             ("subset_rare", ("subset_rare",)),
             ("subset_tiny", ("subset_tiny",)),
+            # 按目标尺寸分档的 AP（COCO 口径，scripts/eval_ap_by_size.py 产出）
+            ("ap_coco", ("ap_coco",)),
+            ("ap50_coco", ("ap50_coco",)),
+            ("ap75_coco", ("ap75_coco",)),
+            ("ap_small", ("ap_small",)),
+            ("ap_medium", ("ap_medium",)),
+            ("ap_large", ("ap_large",)),
         ):
             for jk in jkeys:
                 if data.get(jk) is not None:
@@ -167,6 +174,25 @@ def render(items: List[Dict[str, object]], out_path: Path, eval_split: str = "va
             lines.append(
                 f"| {it.get('run')} | {_pct(it.get('subset_adhesion'))} | {_pct(it.get('subset_dense'))} "
                 f"| {_pct(it.get('subset_rare'))} | {_pct(it.get('subset_tiny'))} |"
+            )
+        lines.append("")
+
+    # 按目标尺寸分档的 AP（COCO 口径：small <32², medium 32²~96², large >96² 像素）
+    aps = [i for i in items if i.get("ap_small") is not None]
+    if aps:
+        lines += [
+            "## 按目标尺寸分档的 AP（COCO 口径，pycocotools）",
+            "",
+            "> 尺度公平主张的直接证据：AP_S（小目标）应当领先于整体 AP 的提升幅度",
+            "",
+            "| 实验 | AP | AP50 | AP75 | AP_S 小 | AP_M 中 | AP_L 大 |",
+            "|---|---|---|---|---|---|---|",
+        ]
+        for it in aps:
+            lines.append(
+                f"| {it.get('run')} | {_pct(it.get('ap_coco'))} | {_pct(it.get('ap50_coco'))} "
+                f"| {_pct(it.get('ap75_coco'))} | {_pct(it.get('ap_small'))} "
+                f"| {_pct(it.get('ap_medium'))} | {_pct(it.get('ap_large'))} |"
             )
         lines.append("")
 

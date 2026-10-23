@@ -806,9 +806,17 @@ yolo11n-strong = YOLO11n
 | 指标 | 口径 | 产出 | 门槛 |
 |---|---|---|---|
 | **eval mAP50 / mAP50-95** | EVAL_SPLIT = **test**（7,600 张），实验间一律默认 `conf=0.001 / iou=0.7` | `runs/*/results.csv` + `artifacts/eval/*.json` | 创新组合相对**强基线** ≥ **+1.0 pt**（两项都要） |
-| eval Precision / Recall | 同上 | 同上 | 观察项（误检/漏检的归因） |
+| eval Precision / Recall | 同上（ultralytics 的 `box.mp` / `box.mr`，跨 IoU 阈值与跨类别平均） | 同上 | 观察项（误检/漏检的归因） |
+| **AP / AP50 / AP75 / AP_S / AP_M / AP_L** | **COCO 官方口径**（pycocotools COCOeval，面积阈值 32²/96² 像素）→ **尺度公平主张最该配的表** | `scripts/eval_ap_by_size.py` → `artifacts/eval/<run>.json` | **AP_S（小目标）的提升幅度应领先于整体 AP** |
+| **F1 / PR 曲线** | 逐 conf 的 P/R/F1 曲线 → 用来**选部署工作点**（conf） | `scripts/scan_thresholds.py` → `artifacts/scan/conf_curve.csv` | **不用于实验间对比**（F1 依赖工作点，mAP 不依赖） |
 | 耗时 / 参数量 / FLOPs | 同上 | `results.md` | 推理成本不显著变差 |
 | **定向子集 mAP**（4 个） | 粘连图 / 密集图 / 稀有类 / 极小类（定义见 §9.1，**口径全程不变**） | `scripts/eval_subsets.py` → `artifacts/eval/<run>.json` | 每个组件**在自己的子集上**必须有提升（B2） |
+
+> **为什么检测论文不报 F1**：检测的 P/R 是"跨 IoU 阈值(0.5:0.95) × 跨类别"的平均标量，
+> F1 必须先固定**两个**自由度（conf 阈值、IoU 阈值）才能算 → 它只是 PR 曲线上的一个点。
+> 标准做法是取 PR 曲线的**面积**（AP/mAP），它对阈值不敏感、且与 COCO 官方评测一致。
+> 所以本项目：**主表用 mAP50/mAP50-95 + AP_S/AP_M/AP_L**，
+> **P/R 作归因观察项**，**F1 只用来定部署 conf**（不参与实验间对比）。
 
 > `scripts/eval_subsets.py`（本项目新增）：图像子集按"整图参与评测"重跑一次 val；
 > 类别子集取全库逐类 AP（`all_ap`）在该子集类别上的平均 —— 与 Pest24 原论文
@@ -893,6 +901,7 @@ T4 用 **3 个 seed**（0/1/2）跑定稿组合，做**配对 t 检验**（p<0.0
 | `scripts/diagnose_adhesion.py` | D0 分析 + **G0 裁决** |
 | `scripts/compare_sla.py` | **SLA 前后对照分析**（几何缺口 + 面积标定残差，同 seed 同数据序） |
 | `scripts/eval_subsets.py` | **定向子集评测**（4 个子集 mAP → `artifacts/eval/<run>.json`，验收标准 B2 的依据） |
+| `scripts/eval_ap_by_size.py` | **按目标尺寸分档的 AP**（COCO 官方口径 AP/AP50/AP75/AP_S/AP_M/AP_L，pycocotools） |
 | `scripts/synth_adhesion.py` | I4 ASM 合成 |
 | `scripts/density_prior.py` | I2 密度场渲染与统计 |
 | `scripts/scan_thresholds.py` | conf/iou 扫描（定部署点） |

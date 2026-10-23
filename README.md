@@ -57,6 +57,10 @@ python scripts/compare_sla.py --base runs/diag/sla_base.jsonl --sla runs/diag/sl
 python scripts/eval_subsets.py --model runs/pest24/strong_SLA/weights/best.pt \
     --data datasets/pest24/pest24.yaml --split test --run-name strong_SLA
 
+# 3.8) 按目标尺寸分档的 AP（COCO 口径 AP_S/AP_M/AP_L）→ 同一份 JSON
+python scripts/eval_ap_by_size.py --model runs/pest24/strong_SLA/weights/best.pt \
+    --data datasets/pest24/pest24.yaml --split test --run-name strong_SLA
+
 # 4) 正式实验矩阵
 bash train/40_t1.sh    # T1 基线与工程线
 bash train/50_t2.sh    # T2 复现筛查 + 强基线组装

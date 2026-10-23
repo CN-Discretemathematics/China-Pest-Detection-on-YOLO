@@ -28,3 +28,6 @@ scipy>=1.11
 pandas>=2.0
 tqdm>=4.66
 psutil>=5.9
+
+# 按目标尺寸分档的 AP（COCO 口径 AP_S/AP_M/AP_L）—— scripts/eval_ap_by_size.py
+pycocotools>=2.0.7

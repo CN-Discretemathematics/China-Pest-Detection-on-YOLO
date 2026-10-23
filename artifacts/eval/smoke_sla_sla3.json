@@ -25,5 +25,12 @@
   "subset_dense_n_images": 2,
   "subset_dense_n_images_full_dataset": 2135,
   "mAP50": 0.033452469659089636,
-  "mAP50-95": 0.020256552972742835
+  "mAP50-95": 0.020256552972742835,
+  "ap_coco": 0.020842710152359827,
+  "ap50_coco": 0.0341595132708824,
+  "ap75_coco": 0.02339981243411801,
+  "ap_small": 0.0017690745712950204,
+  "ap_medium": 0.027081327349575426,
+  "ap_large": -1.0,
+  "ap_size_source": "pycocotools COCOeval (areaRng: small<32^2, medium 32^2~96^2, large>96^2 px)"
 }
