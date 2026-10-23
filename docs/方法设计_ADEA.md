@@ -17,7 +17,7 @@
 | R4 | P2 检测头（stride-4） | **复现** | arXiv:2512.16493 (YOLO11-4K) |
 | R5 | Scale-Quality Aware EIoU | **复现** | AEP-PEST, JRTIP 2026 |
 | R6 | 静态长尾重采样 | **复现（通用技巧）** | 实例数-显著性 |
-| **I1** | **SLA：面积标定的公平正样本分配**（残差补偿 + 冲突消解递补） | **★创新（由本机诊断重构）** | 实测 `corr(log 相对尺度, n_pos)=+0.852`；面积标定后粘连残差 −0.761 |
+| **I1** | **SLA：面积标定的公平正样本分配**（M0 密度补偿 + S1 度量一致性 + S2 公平再分配） | **★创新 —— 本项目诊断新发现**（见下方说明） | 实测 `corr(log 相对尺度, n_pos)=+0.852`；几何口径复测：竞争剥夺仅 0.24%、几何不足 7.54% |
 | **I1a** | ALA：粘连感知配额补偿（初版方案，触发判据已被数据修正） | **降级为消融项** | 引擎保留，触发判据换为面积标定残差 |
 | **I2** | **DLA：密度先验引导的分配与抑制** | **★创新** | FW-3 / FW-4（EP-YOLO 点名 DME） |
 | **I3** | **DRA：难度感知的动态长尾重采样** | **★创新** | FW-1（EP-YOLO 点名 dynamic resampling） |
@@ -30,6 +30,32 @@
 **统一方法 ADEA 的关键性质**：I1–I4 全部作用在**监督分配层**与**数据/采样层**，
 与已发表工作改造的**特征层 / 颈部 / 损失层正交** → 可叠加、互不冲突，
 且**不改变推理时的模型结构**（I5 AGS 是唯一影响推理的，且是纯后处理）。
+
+> ### ⚠️ I1（SLA）的出处必须如实写清：**它不在任何论文的 future work 里**
+>
+> 溯源表（`调研报告` §5）里的 FW-1…FW-5 对应的是**初版方案**：
+> I3 DRA ← FW-1（dynamic resampling）、I2 DLA ← FW-3（Density Map Estimation）、
+> I7 ← FW-2（成像极限）、I1 **ALA** ← FW-3/FW-4（粘连误抑制）。
+>
+> 但 G0 诊断**证伪了 ALA 的前提**（"粘连目标被邻居抢走"实测只占 **0.24%**），
+> 方法因此重构为 SLA —— **它的依据是本项目自己的诊断，不是别人的 future work**。
+>
+> 这**不是弱点，但要换一种写法**（更有力、也更容易自圆其说）：
+> * **现象层面有旁证**：EP-YOLO §4.3 把"micro-pests 接近成像极限、纯特征增强不够"
+>   列为 FW-2，其 Fig.12a 明确写 *"failed to detect 66 out of 88 targets, most of
+>   which are the smallest pests"* —— **"小目标漏检"被点名，但没人指出机制**；
+> * **机制层面是我们的贡献**：我们第一次量化了"每 GT 正样本数由几何（面积/stride²）决定"
+>   这一机制（corr = 0.965），并区分出"竞争剥夺(0.24%) vs 几何不足(7.54%)"；
+> * **查重依据**（`调研报告` §4 查重表）：最接近的前人是 YOLOv7 的 allowed area
+>   （固定邻域扩展）与 ATSS/PAA/SimOTA（模型驱动的样本选择），
+>   **均未做"面积标定的份额 + 配额驱动的扩展"**，也**无人报告过
+>   "正样本数是目标尺度的函数"这一统计事实**；
+> * **论文写法**："We diagnose a mechanism that prior work named only at the symptom
+>   level (FW-2) and show it originates in the **label-assignment layer**;
+>   we reformulate assignment as an **area-calibrated supervision-budget** problem."
+>
+> ⚠️ 反过来说：**不要**再写 "our innovation follows the future work of EP-YOLO"——
+> SLA 已经不是那条线上的东西，写错会被审稿人当场抓住。
 
 ---
 

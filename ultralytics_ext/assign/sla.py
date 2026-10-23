@@ -386,8 +386,10 @@ def sla_assign(
     if cfg.fairness and cfg.max_rounds > 0:
         per_gt_recv = torch.zeros((b, n_gt), dtype=torch.long, device=dev)
         for _ in range(cfg.max_rounds):
-            gap = (need - counts).to(torch.float32)          # ≥ 0，越大越饿
-            i_star = gap.argmax(dim=1)                      # (b,) 最饿的 GT
+            gap = (need - counts).to(torch.float32)          # ≥ 0，越大越"饿"
+            # "最饿" = 缺口最大的那个 GT（论文中写作 most-deficient GT）
+            #         缺口 gap_i = 公平份额 need_i - 实际拿到 count_i
+            i_star = gap.argmax(dim=1)                      # (b,) 缺口最大的 GT
             gap_star = gap.gather(1, i_star[:, None])
             need_star = need.gather(1, i_star[:, None])
             cnt_star = counts.gather(1, i_star[:, None])
