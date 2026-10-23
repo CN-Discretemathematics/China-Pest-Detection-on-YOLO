@@ -1,0 +1,41 @@
+# Pest24 数据集配置（YOLO 格式）
+#
+# ⚠️ `path` 由 scripts/voc2yolo.py 自动生成到 datasets/pest24/pest24.yaml。
+#    本文件是**模板/备份**，供云端实例使用（云端路径不同）。
+#    24 类顺序与 scripts/voc2yolo.py 的 CLASSES 列表**必须完全一致**。
+#
+# 划分说明：官方按 5:2:3 划分（train ≈ 12,689 / val ≈ 5,076 / test ≈ 5,076）。
+#          官方仅公开 train/val 标注；若镜像的 test 无标注，
+#          则统一用 `val` 作为 EVAL_SPLIT（**禁止自行从 train 切 test**）。
+
+path: /root/autodl-tmp/datasets/pest24
+
+train: images/train
+val: images/val
+test: images/test
+
+names:
+  0: Bollworm
+  1: Meadow borer
+  2: Gryllotalpa orientalis
+  3: Little Gecko
+  4: Agriotes fuscicollis Miwa
+  5: Nematode trench
+  6: Athetis lepigone
+  7: Scotogramma trifolii Rottemberg
+  8: Armyworm
+  9: Spodoptera cabbage
+  10: Anomala corpulenta
+  11: Spodoptera exigua
+  12: Plutella xylostella
+  13: holotrichia parallela
+  14: Rice planthopper
+  15: Yellow tiger
+  16: Land tiger
+  17: eight-character tiger
+  18: holotrichia oblita
+  19: Stem borer
+  20: Striped rice bore
+  21: Rice Leaf Roller
+  22: Spodoptera litura
+  23: Melahotus

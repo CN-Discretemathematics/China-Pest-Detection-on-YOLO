@@ -1,0 +1,30 @@
+# China-Pest-Detection-on-YOLO —— 环境依赖
+#
+# 版本锁定说明（方案 §10.1 U7）：
+#   ultralytics 固定精确版本（撰写时最新稳定版 = 8.4.184），
+#   锁定后**全实验矩阵**（T1→T4）必须使用同一版本，否则指标不可比。
+#
+# 安装（GPU，CUDA 12.1，兼容 Turing sm_75 如 GTX 1660 SUPER）：
+#   pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cu121
+#   pip install -r requirements.txt
+#
+# 无 GPU 环境：
+#   pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
+#   pip install -r requirements.txt
+
+torch==2.5.1
+ultralytics==8.4.184
+
+# 数据准备
+kagglehub>=0.3.0
+
+# 依赖固定与产物处理
+numpy>=1.26,<3
+PyYAML>=6.0
+pillow>=10.0
+matplotlib>=3.8
+opencv-python>=4.9
+scipy>=1.11
+pandas>=2.0
+tqdm>=4.66
+psutil>=5.9
