@@ -1,0 +1,36 @@
+{
+  "c_fit": 8296.011529254822,
+  "topk": 10,
+  "baseline": {
+    "n_samples": 6589,
+    "mean_n_pos": 8.4057,
+    "mean_n_pos_usable": 8.1034,
+    "mean_n_cand": 20.7525,
+    "pct_starved_lt3": 8.04,
+    "mean_residual": -0.0719,
+    "mean_residual_adhesion": -0.6557,
+    "mean_residual_isolated": -0.0,
+    "corr_residual_beta": -0.1775,
+    "pct_underallocated": 61.41,
+    "mean_geometric_gap": 0.0505,
+    "max_geometric_gap": 9.0,
+    "pct_gap_gt05": 2.82,
+    "pct_gap_gt2": 0.41
+  },
+  "sla": {
+    "n_samples": 6589,
+    "mean_n_pos": 8.421,
+    "mean_n_pos_usable": 8.104,
+    "mean_n_cand": 20.7839,
+    "pct_starved_lt3": 7.98,
+    "mean_residual": -0.0566,
+    "mean_residual_adhesion": -0.6626,
+    "mean_residual_isolated": 0.0181,
+    "corr_residual_beta": -0.1853,
+    "pct_underallocated": 60.63,
+    "mean_geometric_gap": 0.0513,
+    "max_geometric_gap": 10.0,
+    "pct_gap_gt05": 3.05,
+    "pct_gap_gt2": 0.36
+  }
+}

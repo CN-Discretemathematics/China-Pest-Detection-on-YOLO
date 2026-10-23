@@ -1,18 +1,19 @@
 #!/usr/bin/env bash
 # --------------------------------------------------------------------------- #
-# 60_t3.sh —— T3 创新模块包（约 8 GPU-h）★本方案的价值所在
+# 60_t3.sh —— T3 创新模块包（约 10 GPU-h）★本方案的价值所在
 #
-#   T3-1 strong+ALA         ★I1  粘连子集
-#   T3-2 strong+DLA         ★I2  高密度子集 + 密集区误检率
-#   T3-3 strong+DRA         ★I3  稀有类子集
-#   T3-4 strong+ASM         ★I4  粘连子集
-#   T3-5 strong+ALA+DLA     I1+I2 互补性
-#   T3-6 strong+全量        I1+I2+I3+I4
-#   T3-7 strong+I6          可选：混淆对感知分类损失
+#   T3-1 strong+SLA        ★I1 SLA（核心创新：M0 密度补偿 + S1 度量一致性 + S2 公平再分配）
+#   T3-2 strong+SLA_M0     SLA 消融：只开 M0（监督密度补偿）
+#   T3-3 strong+SLA_noexp  SLA 消融：只开 S1+S2（冲突裁决 + 公平再分配）
+#   T3-4 strong+ALA        ★消融项 I1'（初版粘连感知配额补偿，已降级）
+#   T3-5 strong+DLA        ★I2  高密度子集 + 密集区误检率
+#   T3-6 strong+DRA        ★I3  稀有类子集
+#   T3-7 strong+AGS        ★I4/I5 粘连子集 + 后处理
+#   T3-8 strong+SLA+DRA+AGS  I1+I3+I4 全量组合
 #
-# 前置条件：G0 通过（M1 成立）。若 G0 判定 FAIL，则**只跑 T3-3 / T3-4**
-#           （I3 DRA / I4 ASM），并把 D0 + I7 作为论文主体。
-# 闸门 G3：≥1 个组件相对强基线 mAP50 ≥ 0.5 pt **且在其定向子集上 ≥ 1 pt**
+# 前置条件：G0 通过（M2 成立）。
+# 闸门 G3：SLA 相对**强基线** mAP50 ≥ 1.0 pt 且 mAP50-95 ≥ 1.0 pt，
+#           并在其定向子集（微目标/粘连）上有提升。
 # --------------------------------------------------------------------------- #
 set -euo pipefail
 
@@ -72,19 +73,27 @@ run () {
 }
 
 if [ "${G0_VERDICT}" = "FAIL" ] || [ "${G0_VERDICT}" = "PENDING" ]; then
-  echo "!!! G0 = ${G0_VERDICT}：按降级路径，只跑 I3 DRA / I4 ASM"
+  echo "!!! G0 = ${G0_VERDICT}：按降级路径，只跑 I3 DRA / I5 AGS"
   run strong_DRA   "ADEA_DRA=1"   "${STRONG}"
-  run strong_ASM   "ADEA_AGS=1"   "${STRONG}"
+  run strong_AGS   "ADEA_AGS=1"   "${STRONG}"
 else
-  # ---- I1 ~ I4 单组件 ----
-  run strong_ALA   "ADEA_ALA=1"   "${STRONG}"
-  run strong_DLA   "ADEA_DLA=1"   "${STRONG}"
-  run strong_DRA   "ADEA_DRA=1"   "${STRONG}"
-  run strong_ASM   "ADEA_AGS=1"   "${STRONG}"
+  # ---- I1 SLA（核心创新）及其消融 ----
+  run strong_SLA       "ADEA_SLA=1"                                    "${STRONG}"
+  run strong_SLA_M0    "ADEA_SLA=1 ADEA_SLA_S2=0"                       "${STRONG}"
+  run strong_SLA_noexp "ADEA_SLA=1 ADEA_SLA_EXPAND=0"                  "${STRONG}"
+  # ---- I1b SFW（尺度公平监督权重，损失层）----
+  run strong_SFW       "ADEA_SFW=1"                                    "${STRONG}"
+  run strong_SLA_SFW   "ADEA_SLA=1 ADEA_SFW=1"                         "${STRONG}"
+  # ---- 初版 ALA（消融项，已降级为 I1'）----
+  run strong_ALA       "ADEA_ALA=1"                                    "${STRONG}"
+  # ---- I2 ~ I5 单组件 ----
+  run strong_DLA       "ADEA_DLA=1"                                    "${STRONG}"
+  run strong_DRA       "ADEA_DRA=1"                                    "${STRONG}"
+  run strong_AGS       "ADEA_AGS=1"                                    "${STRONG}"
   # ---- 互补性验证 ----
-  run strong_ALA_DLA "ADEA_ALA=1 ADEA_DLA=1" "${STRONG}"
+  run strong_SLA_DLA   "ADEA_SLA=1 ADEA_DLA=1"                         "${STRONG}"
   # ---- 全量组合 ----
-  run strong_ADEA  "ADEA_ALA=1 ADEA_DLA=1 ADEA_DRA=1 ADEA_AGS=1" "${STRONG}"
+  run strong_ADEA      "ADEA_SLA=1 ADEA_DLA=1 ADEA_DRA=1 ADEA_AGS=1"   "${STRONG}"
   # ---- 可选 I6 ----
   if [ "${RUN_I6:-0}" = "1" ]; then
     run strong_I6   "ADEA_PAIR_CLS=1" "${STRONG}"

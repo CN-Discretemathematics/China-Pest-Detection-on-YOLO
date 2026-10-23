@@ -48,6 +48,10 @@ bash train/30_smoke.sh
 # 3.5) 本地自测（不消耗 GPU）
 python scripts/selftest_adea.py          # 纯算法自测：ALA/DLA/AGS/DRA（35 项）
 python scripts/selftest_assigner_ala.py  # ALA 端到端：真实 assigner 上复现 M1 饥饿并验证救援
+python scripts/selftest_sla.py            # SLA 自测（27 项）：与 vanilla 逐 anchor 等价 / S1 / S2 / M0 / 不变式
+
+# 3.6) SLA 前后对照（需先各跑一次带 ADEA_DIAG=1 的训练）
+python scripts/compare_sla.py --base runs/diag/sla_base.jsonl --sla runs/diag/sla_sla3.jsonl
 
 # 4) 正式实验矩阵
 bash train/40_t1.sh    # T1 基线与工程线

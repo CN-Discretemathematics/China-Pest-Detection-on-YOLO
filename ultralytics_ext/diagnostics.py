@@ -69,6 +69,7 @@ def record_assignment(
     gt_bboxes,
     beta_thr: float = 0.05,
     batch_idx: int = 0,
+    align_metric=None,
 ) -> Dict[str, Any]:
     """记录一次 assign 的统计量（逐 batch 元素）。
 
@@ -82,6 +83,12 @@ def record_assignment(
         (b, n_max_boxes, 4) GT 框（xyxy，像素）。
     beta_thr:
         判定"非忽略粘连"的阈值。
+    align_metric:
+        可选 (b, n_max_boxes, num_anchors) 对齐度量。
+        用来额外记录两个**同口径**字段（用于 SLA 的几何缺口分析）：
+        * ``n_cand``：该 GT 的**可用候选数**（框内且 align>0 的 anchor 数）
+          → SLA 的公平份额 = ``min(topk, n_cand)``；
+        * ``n_pos_usable``：该 GT 实际拿到的**可用**正样本数（align>0）。
 
     Returns
     -------
@@ -90,6 +97,9 @@ def record_assignment(
     """
     n_b = int(target_gt_idx.shape[0])
     per_batch: List[Dict[str, Any]] = []
+
+    if align_metric is not None:
+        import torch
 
     for b in range(n_b):
         tgi = target_gt_idx[b].detach().cpu().tolist()
@@ -101,6 +111,20 @@ def record_assignment(
         for t, m in zip(tgi, fg):
             if m and 0 <= t < n_gt:
                 counts[t] += 1
+
+        # ---- 可用口径（align>0）：与 SLA 的"几何份额"同口径 ----
+        n_cand = [0] * n_gt
+        n_pos_usable = [0] * n_gt
+        if align_metric is not None:
+            am = align_metric[b].detach().cpu()
+            usable = am > 1e-9
+            n_cand = [int(v) for v in usable.sum(dim=-1).tolist()]
+            tgi_t = torch.tensor(tgi, dtype=torch.long)
+            fg_t = torch.tensor([bool(m) for m in fg], dtype=torch.bool)
+            for t in set(tgi):
+                if 0 <= t < n_gt:
+                    sel = (tgi_t == t) & fg_t & usable[t]
+                    n_pos_usable[t] = int(sel.sum())
 
         boxes = [tuple(float(v) for v in g) for g in gtb]
         beta_max = [0.0] * n_gt
@@ -124,6 +148,8 @@ def record_assignment(
                 "b": b,
                 "n_gt": n_gt,
                 "n_pos": counts,
+                "n_pos_usable": n_pos_usable,
+                "n_cand": n_cand,
                 "beta_max": beta_max,
                 "beta_nn": [1.0 if v > beta_thr else 0.0 for v in beta_max],
                 "areas": areas,
@@ -166,9 +192,12 @@ def install_diagnostics() -> Dict[str, str]:
     def patched_get_pos_mask(self, pd_scores, pd_bboxes, gt_labels, gt_bboxes, anc_points, mask_gt, **extra):
         self._adea_gt_bboxes = gt_bboxes
         self._adea_mask_gt = mask_gt
-        return orig_get_pos_mask(
+        mask_pos, align_metric, overlaps = orig_get_pos_mask(
             self, pd_scores, pd_bboxes, gt_labels, gt_bboxes, anc_points, mask_gt, **extra
         )
+        # 暂存对齐度量：用于记录"可用候选数 / 可用正样本数"（SLA 几何缺口口径）
+        self._adea_align_metric = align_metric
+        return mask_pos, align_metric, overlaps
 
     orig_select = TaskAlignedAssigner.select_highest_overlaps
 
@@ -179,7 +208,13 @@ def install_diagnostics() -> Dict[str, str]:
         try:
             gt_bboxes = getattr(self, "_adea_gt_bboxes", None)
             if gt_bboxes is not None and gt_bboxes.shape[1] > 0:
-                record_assignment(target_gt_idx, fg_mask, gt_bboxes, batch_idx=counter["n"])
+                record_assignment(
+                    target_gt_idx,
+                    fg_mask,
+                    gt_bboxes,
+                    batch_idx=counter["n"],
+                    align_metric=getattr(self, "_adea_align_metric", None),
+                )
                 counter["n"] += 1
         except Exception:
             pass

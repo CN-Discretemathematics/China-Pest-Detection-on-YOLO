@@ -153,26 +153,113 @@ E[n_pos | a_rel] = min(k0, c · a_rel)      k0 = 11（实测饱和上限），c 
 （−0.17 ~ −0.29，粘连残差恒低于孤立残差）→ **粘连目标确实被剥夺**，
 只是幅度远小于面积效应。58.96% 的 GT 处于"被低估"状态。
 
-**关键代码事实**（解释了粘连为何被剥夺）：
-`ultralytics/utils/tal.py::select_topk_candidates` 中
-`count_tensor.masked_fill_(count_tensor > 1, 0)` ——
-**被多个 GT 同时选中的 anchor 被"全部作废"**（谁也没拿到），
-粘连的 GT 因此互相挤占并浪费名额。
+**关键代码事实**（解释了粘连为何被剥夺）——**本项目已逐行核对 ultralytics 8.4.184 源码并实测验证**：
+
+* `ultralytics/utils/tal.py::select_topk_candidates` 末尾确有
+  `count_tensor.masked_fill_(count_tensor > 1, 0)`，
+  但 `count_tensor` 是按 **`(gt, anchor)`** 索引的（`scatter_add_` 的 dim=-1），
+  同一 GT 的 top-k 下标互不重复 → `count` 恒 ≤ 1，
+  **该行其实是死代码**（实测 `count.max() == 1`，已写入 `scripts/selftest_sla.py` 的对照测试）；
+* 真正的剥夺发生在 **`select_highest_overlaps`**：
+  一个 anchor 被多个 GT 同时选中（top-k 列表重叠）时，
+  **只有与预测框 IoU 最高的那个 GT 保留它**
+  （源码注释：*"Anchors assigned to multiple gt_bboxes keep the highest overlap"*），
+  其余 GT **直接失去**这些 anchor。
+
+→ 粘连簇里，共享区域被"几何上最贴合"的那个目标独占；
+**尺寸较小的成员被系统性地剥夺了监督预算**——这正是残差 −0.761 的来源。
+
+#### 发现 4（**决定性**）：用**几何口径**复测后，瓶颈被重新定位
+
+上表的"面积标定残差"依赖一个**参数化拟合**（`min(k0, c·a)`），
+它把"面积效应"与"竞争剥夺"混在一起。为了得到**无拟合**的结论，
+本项目在诊断采集器中补记了**两个几何字段**：
+
+* `n_cand`：该 GT 的**可用候选数**（框内且 `align_metric>0` 的 anchor 数）→ 几何上限；
+* `n_pos_usable`：它实际拿到的**可用**正样本数。
+
+在 6,589 个 GT 样本（同 seed、同数据序的 baseline vs SLA 对照）上的结果：
+
+| 观测量 | 数值 | 含义 |
+|---|---|---|
+| `n_pos == min(topk, n_cand)` 的比例 | **80.62%** | 分配器**基本已到几何上限** |
+| 低于几何上限的 GT | **2.67%** | 可再分配的 headroom 很小 |
+| 其中"池够却被抢"（竞争剥夺） | **0.24%** | **冲突剥夺极其稀疏** |
+| `n_cand < 3`（几何不足） | **7.54%** | 微目标**天生**只有 1~2 个正样本 |
+| `corr(log 相对面积, log n_cand)` | **0.965** | 候选池几乎**完全由面积决定** |
+| 最小区间（相对面积 < 1e-4） | `n_cand` 均值 **0.41**、`n_pos` 均值 **1.85** | 微目标的监督预算**在几何上就不足** |
+
+**结论（改写方法定位）**：
+
+1. 正样本数是**目标尺度的函数**（`corr(log 相对尺度, n_pos) = 0.852`），
+   根源是"候选池 ∝ 面积/stride²"这一**几何事实**，而不是"被邻居抢占"；
+2. **竞争剥夺只占 0.24%**——初版"粘连感知配额补偿"（ALA）针对的机制**不是主要矛盾**；
+3. 因此 SLA 的主机制必须转向**监督密度**：把"公平份额"从"几何上限"
+   提升为"**配额下限**"，并用**面积标定的候选区扩展**去补足（见下）。
+
+> 这也是本项目方法论的价值所在：**G0 kill gate 先证伪了朴素机制假说，
+> 再用更细的几何口径重定位瓶颈**——避免了 35 GPU-h 的无效投入。
+
+#### 发现 5：SLA 的本机端到端验证（baseline vs SLA，同 seed / 同数据序 / 同一 topk）
+
+在 1,270 张训练图上各跑 1 epoch（1660S），用 `scripts/compare_sla.py` 做**同口径**对照
+（`c` 由 baseline 标定后两次运行共用）：
+
+| 指标 | baseline | SLA(M0+S1+S2) | Δ |
+|---|---|---|---|
+| 平均正样本数（fg 口径） | 8.406 | **9.507** | **+1.102** |
+| 平均可用候选数 | 20.75 | 24.05 | +3.30 |
+| **被饿死比例（n_pos<3）** | 8.04% | **6.68%** | **−1.36 pt** |
+| **粘连目标残差** | −0.656 | **−0.127** | **+0.528** |
+| 被低估比例 | 61.41% | 57.81% | −3.60 pt |
+| `corr(残差, β)` | −0.177 | −0.150 | +0.027 |
+
+**尺度公平（核心主张的直接度量）**：
+
+| 相对面积档 | n | baseline n_pos | SLA n_pos | Δ |
+|---|---|---|---|---|
+| [0, 1e-4)（微目标） | 173 | 1.80 | **2.96** | +1.17 |
+| [1e-4, 3e-4) | 486 | 3.75 | **7.50** | +3.75 |
+| [3e-4, 1e-3) | 1,661 | 6.57 | **9.60** | +3.03 |
+| [1e-3, 3e-3) | 2,393 | 9.87 | 9.94 | +0.07 |
+| [3e-3, 1e-2) | 1,804 | 9.98 | 10.00 | +0.01 |
+| [1e-2, 1) | 72 | 10.00 | 10.04 | +0.04 |
+
+| `corr(n_pos, log 相对尺度)` | baseline **+0.8465** | SLA **+0.5609**（−34%） |
+|---|---|---|
+
+→ 微目标的监督预算被补齐，**大目标的预算不受影响**（topk 上限守住），
+监督分配从"几何决定的尺度偏置"变成"接近尺度中立"。
+
+**仍然存在的 headroom**（诚实记录）：
+* S2 的公平再分配只触发了 **15 次 / 382 批次** —— 因为竞争剥夺本身只有 0.24%；
+* 因此**吸附簇**方向的收益有限，粘连子集的提升主要要靠 AGS（后处理）与特征侧（SPD/DySample）。
 
 #### 由此得到的最终方法：SLA（面积标定的公平正样本分配）
 
-把 M1/M2 合成一个统一机制，替换初版的"粘连感知配额补偿"：
-
-| 组件 | 作用 | 依据 |
+| 组件 | 作用 | 依据（均为本机实测） |
 |---|---|---|
-| **期望标定** | `E[n_pos\|a] = min(k0, c·a_rel)`，c 由非粘连样本零残差标定 | 实测 corr 0.852 |
-| **残差补偿** | 残差 < 0 的 GT 从残差 > 0 的 GT 回收 anchor；供体容量 = 自身残差余量 | 实测粘连残差 −0.761 |
-| **尺度分层** | 在更细 stride 的监督层（P2/stride-4）为微目标提供足够候选 | 候选数 ∝ 面积/stride² |
-| **冲突消解** | anchor 被多 GT 选中时归给度量最高者，其余 GT **递补**下一个候选（替代"全部作废"） | `count>1 → 0` 的代码事实 |
+| **M0 监督密度补偿**（主） | 候选池不足配额（默认对齐 assigner 的 `topk`，无自由参数）的 GT，其候选框**每边扩张 `margin·stride_val`**（保持中心）；扩张区同样进入 `align_metric` 计算 → top-k 自动挑走对齐质量最好的 anchor | 微目标的几何候选池被 stride 网格卡死；`corr(log 面积, log 候选池)=0.965` |
+| **公平份额（面积标定）** | 份额 `need_i = min(topk, 候选池_i)`——**纯几何量**，与分辨率/结构无关 | 候选数 ∝ 面积/stride²；加 P2 后自动变大 |
+| **S1 冲突裁决的度量一致性** | 冲突 anchor 归给 `align_metric` 最高者（与 top-k 选择同一度量），且只在提名者中裁决 | vanilla 用纯 IoU 裁决，与 top-k 选择用了两套标准 |
+| **S2 公平再分配** | 被挤占的 GT 从欠剥夺的 GT 手里取回**同时位于自己框内**的 anchor（匹配度护栏 ρ），零和转移 | 粘连残差 −0.761；max-min 公平（最大缺口下降） |
+| **尺度分层** | 在更细 stride 的监督层（P2/stride-4）为微目标提供足够候选 | 候选数 ∝ 面积/stride²；与 M0 是**架构层 / 分配层**两条互补路径 |
+
+> **为什么 M0 用"边距"而不是"倍数"**：ultralytics 的 `select_candidates_in_gts`
+> 会把尺寸小于 `stride_val` 的边**抬到 `stride_val`** →
+> 对极小框做乘性扩张会被这条规则吃掉（5×5 框 ×2 = 10×10 → 又被抬回 16×16 → 候选池毫无变化）。
+> 用**以 stride 为单位**的边距则对任意尺寸都有确定效果，且**与分辨率无关**。
+
+**为什么份额用几何量而不是"面积表"**：早期设计用经验表 `E[n_pos|a_rel]`（6 档）作期望，
+实测有两个隐患：(1) `a_rel` 的口径依赖 letterbox 缩放，表与运行时会错档；
+(2) 加入 P2 层后候选池结构改变，同一张表不再成立。
+改用 `need_i = min(topk, 候选数)` 后两个隐患同时消失，
+且**加 P2 层时公平份额会自动适配**——这正是"面积标定"的本意：
+**份额由面积（→ 候选数）决定，而不是拍脑袋的常数**。
 
 **与初版 ALA 的关系**：ALA 的引擎（配额补偿、供体保护、不变量）**完全保留**，
-只更换了 (a) 触发判据：从"粘连簇 + 绝对 n_pos"改为"**面积标定残差**"；
-(b) 供体池：从"同粘连簇"放宽到"全局超额 GT"；(c) 新增冲突消解与递补。
+只更换了 (a) 触发判据：从"粘连簇 + 绝对 n_pos"改为"**面积标定的公平份额**"；
+(b) 供体池：从"同粘连簇"放宽到"欠剥夺 GT"；(c) 新增 S1 度量一致性、M0 密度补偿与 S2 公平再分配。
 初版 ALA 作为**消融项**保留在代码里（`ala.py`），用于论文里的对照实验。
 
 #### 一处必须写进论文的批判性观察
@@ -259,7 +346,7 @@ Step 4  返回新的 target_gt_idx
 |---|---|---|
 | 分配入口 | `TaskAlignedAssigner.assign(...)` | `TaskAlignedAssigner.forward(pd_scores, pd_bboxes, anc_points, gt_labels, gt_bboxes, mask_gt, **extra)` |
 | 独占分配发生处 | `target_gt_idx = mask_pos.argmax(-2)` | `select_highest_overlaps(...)`：*"Anchors assigned to multiple gt_bboxes keep the highest overlap"* ← **这正是 M1 的机制** |
-| top-k | 10 | **13**（`TaskAlignedAssigner(topk=13)`，loss 里另用 `tal_topk`） |
+| top-k | 10 | 类默认 13，但 **`v8DetectionLoss(tal_topk=10)` 实际传入 10**（实测每 GT 最多 10 个正样本，与诊断数据吻合）；`topk2=None` → `topk2==topk` → `select_highest_overlaps` 里的二次过滤**被跳过** |
 | GT×anchor 重叠度 | 需自行计算 | 分配器**已算好** `overlaps`（IoU 矩阵，形状 (b, n_max_boxes, num_anchors)）→ ALA 直接复用 |
 | 背景 anchor 的 `target_gt_idx` | `-1` | **`0`** ← ⚠️ 见下方陷阱 2 |
 | 通道记账 | — | 未知模块走 `else` 分支（输出通道被强制等于输入、args 原样传入）→ 自定义模块**必须**注入 `base_modules` |
@@ -287,6 +374,19 @@ Step 4  返回新的 target_gt_idx
 
 由于 `_forward` 随后会用修改后的 `target_gt_idx` 去算 targets 与归一化，
 下游全部保持自洽，**无需修改 loss**。
+
+**SLA 的挂接点（一个补丁）**：`get_pos_mask`
+
+| 补丁 | 作用 |
+|---|---|
+| `get_pos_mask` | 拿到 `mask_pos` + `align_metric` + `overlaps` 三个张量后，重做冲突裁决并施加 S2 公平再分配，返回新的 `mask_pos` |
+
+选这个点的原因：**只有这里同时拿得到 `align_metric` 与 `overlaps`**——
+`select_topk_candidates` 里没有 `overlaps`（无法复现 vanilla 的 IoU 裁决），
+`select_highest_overlaps` 里拿不到 `align_metric` 原始值（已被原地乘算）。
+返回的 `mask_pos` 保持 `(b, n_max_obj, h*w)` 的 0/1 语义，
+下游 `select_highest_overlaps` 会照常做 `max(-2)` 取归属 → 完全自洽，
+且**每个 anchor 至多归属一个 GT** → 独占分配不变式保持 → **无需改 loss**。
 
 ### 2.7 端到端验证（已通过）
 
@@ -329,6 +429,43 @@ DLA 配额长度不匹配 → 异常被 try/except 吞掉）。因此加入两�
 
 > **给复现者的建议**：任何对训练栈打补丁的工作，都必须配套一个"补丁是否真的生效"的
 > 运行时断言，而不能只看训练 loss 是否正常下降 —— loss 正常下降和补丁生效是两件事。
+
+### 2.10 I1b · SFW（尺度公平的监督权重）—— 与 SLA 互补的**损失层**一手
+
+SLA 解决的是"**正样本的个数**"（几何 → 预算），但即使个数被拉平，
+**分类损失里每个目标的贡献仍然 ∝ 它的正样本数**：
+
+```
+loss_cls = Σ_anchors BCE(pred_scores, target_scores) / Σ target_scores
+```
+
+Ultralytics 对正样本**等权**，而一个 GT 有多少正样本是由面积决定的
+（`corr(log 相对面积, log 候选池) = 0.965`）→ **大目标在分类损失里的权重
+天然是微目标的数倍**。这是一条**隐式的尺度偏置**，
+与长尾类别偏置同源，但发生在**尺度轴**上，此前未被处理。
+
+SFW 把分类损失里正样本的权重从"等权"改成"**按 GT 归一**"：
+
+```
+w_a = (N_pos / N_gt) / count_{gt(a)}        （a 为正样本 anchor）
+```
+
+* 每个 GT 对分类损失的**总贡献恰好相等**；
+* 背景 anchor 权重保持 1.0 → 正负样本平衡不变；
+* `Σ_pos w = N_pos` → 分母 `target_scores_sum` 不需要动 → **损失量级不变**。
+
+**与最接近工作的差异**：Balanced L1 Loss（CVPR 2019）处理的是**回归项**的尺度偏置
+（大目标的 L1 天然更大）；SFW 处理的是**分类项**里"**正样本个数**"这条通道——
+它在检测器里此前是空白。
+
+**实现**：`ultralytics_ext/loss/scale_fair.py`
+（补丁 1：`TaskAlignedAssigner.forward` 结束后算每 anchor 权重；
+补丁 2：`v8DetectionLoss.bce` 乘上权重）。
+开关：`ADEA_SFW=1`。
+
+**与 SLA 的分工**：SLA 让"个数"更公平（微目标 1.80 → 2.96 个正样本），
+SFW 让"权重"更公平（每个目标的分类贡献相等）—— 两者都指向同一个诊断结论
+（监督预算被尺度主导），但作用在不同层，**可叠加**。
 
 ---
 
@@ -558,10 +695,11 @@ yolo11n-strong = YOLO11n
 
 | 组件 | 目标子集 | 最低要求 |
 |---|---|---|
-| I1 ALA | 粘连子集 | mAP50 ≥ +1.5 pt |
+| **I1 SLA**（M0 密度补偿 + S1 + S2） | **微目标子集**（相对面积 < 1e-3） | 微目标类平均 AP ≥ +2 pt；整体 mAP50 ≥ +1.0 pt |
+| **I1b SFW**（尺度公平权重） | **微目标 + 稀有类子集** | 微目标类平均 AP ≥ +1 pt；稀有类平均 AP ≥ +1 pt |
 | I2 DLA | 高密度子集 | mAP50 ≥ +1.0 pt **且密集区误检率下降 ≥ 15%** |
 | I3 DRA | 稀有类子集 | 稀有类平均 AP ≥ +3 pt |
-| I4 ASM | 粘连子集 | mAP50 ≥ +1.0 pt |
+| I4 ASM / I5 AGS | 粘连子集 | mAP50 ≥ +1.0 pt |
 
 - **B3 组件归因**：单测增益、组合增益、交互项有明确分解；
 - **B4 显著性**：3 seed 配对检验（配对 t 检验 p<0.05，或 3/3 seed 方向一致 + 效应量）；
@@ -596,23 +734,27 @@ yolo11n-strong = YOLO11n
 
 | 文件 | 内容 |
 |---|---|
-| `ultralytics_ext/assign/ala.py` | I1 ALA：纯算法层 `ala_core` + torch 适配 `apply_ala` |
+| `ultralytics_ext/assign/sla.py` | **I1 SLA（核心创新）**：公平份额 `min(topk, 候选数)` + S1 冲突裁决（度量一致性）+ S2 面积标定公平再分配 |
+| `ultralytics_ext/assign/ala.py` | I1 ALA（已降级为消融项）：纯算法层 `ala_core` + torch 适配 `apply_ala` |
 | `ultralytics_ext/assign/dla.py` | I2 DLA：密度渲染 / 归一化 / 逐 GT 配额 |
 | `ultralytics_ext/sampling/dra.py` | I3 DRA：动态采样器 + 静态对照 |
 | `ultralytics_ext/post/ags.py` | I5 AGS：分级抑制 + `ags_batched_nms` |
 | `ultralytics_ext/modules/spd_conv.py` | R1 SPD-Conv |
 | `ultralytics_ext/modules/ema_attn.py` | R2 EMA（优先官方实现） |
 | `ultralytics_ext/modules/dysample.py` | R3 DySample |
+| `ultralytics_ext/loss/scale_fair.py` | **I1b SFW**：尺度公平的分类权重（每 GT 贡献归一） |
 | `ultralytics_ext/loss/scale_eiou.py` | R5 SQA-EIoU（多挂载点探测） |
 | `ultralytics_ext/loss/pair_aware_cls.py` | I6 混淆对感知分类损失（可选） |
-| `ultralytics_ext/register.py` | 接线：模块注册 / assigner 补丁 / NMS 替换 / 损失安装 |
-| `ultralytics_ext/diagnostics.py` | D0 训练期只读采集 |
+| `ultralytics_ext/register.py` | 接线：模块注册 / **SLA+ALA assigner 补丁** / NMS 替换 / 损失安装 / `assigner_health()` |
+| `ultralytics_ext/diagnostics.py` | D0 训练期只读采集（n_pos / **可用候选数 n_cand** / **可用正样本 n_pos_usable** / β / 面积） |
 | `ultralytics_ext/train_adea.py` | 训练入口包装器（接线后交给 Ultralytics entrypoint） |
 | `scripts/make_model_yamls.py` | 从官方 yolo11.yaml 程序化派生 6 套模型配置（含构建 + 前向 + 权重迁移率校验） |
 | `scripts/diagnose_adhesion.py` | D0 分析 + **G0 裁决** |
+| `scripts/compare_sla.py` | **SLA 前后对照分析**（几何缺口 + 面积标定残差，同 seed 同数据序） |
 | `scripts/synth_adhesion.py` | I4 ASM 合成 |
 | `scripts/density_prior.py` | I2 密度场渲染与统计 |
 | `scripts/scan_thresholds.py` | conf/iou 扫描（定部署点） |
 | `scripts/summarize.py` | runs/ → results.md 台账 |
 | `scripts/selftest_adea.py` | **纯算法自测**（ALA/DLA/AGS/DRA，35 项，不依赖 torch） |
 | `scripts/selftest_assigner_ala.py` | **ALA 端到端自测**（真实 assigner 上复现 M1 饥饿并验证救援） |
+| `scripts/selftest_sla.py` | **SLA 自测**（27 项：与 vanilla 逐 anchor 等价 / S1 度量一致性 / S2 零和转移 / 护栏 / M0 扩张 / 不变式） |
