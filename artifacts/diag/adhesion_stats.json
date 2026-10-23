@@ -1,0 +1,111 @@
+{
+  "dataset": {
+    "splits": [
+      "train",
+      "val",
+      "test"
+    ],
+    "img_size": [
+      800,
+      600
+    ],
+    "n_images": 25378,
+    "n_images_adhesion": 5863,
+    "n_images_dense": 2135,
+    "pct_images_adhesion": 23.1,
+    "pct_images_dense": 8.41,
+    "mean_instances_per_image": 7.582,
+    "max_instances_per_image": 214,
+    "n_gt_pairs": 3254263,
+    "pct_pairs_adhesion_gt_thr": 0.91,
+    "beta_histogram": {
+      "0.00-0.02": 3209639,
+      "0.02-0.04": 10550,
+      "0.04-0.06": 8521,
+      "0.06-0.08": 6911,
+      "0.08-0.10": 5215,
+      "0.10-0.12": 4004,
+      "0.12-0.14": 2951,
+      "0.14-0.16": 2041,
+      "0.16-0.18": 1392,
+      "0.18-0.20": 3039
+    },
+    "per_class_instances": {
+      "Bollworm": 28014,
+      "Meadow borer": 16516,
+      "Gryllotalpa orientalis": 6528,
+      "Little Gecko": 4279,
+      "Agriotes fuscicollis Miwa": 6484,
+      "Nematode trench": 167,
+      "Athetis lepigone": 30339,
+      "Scotogramma trifolii Rottemberg": 4679,
+      "Armyworm": 8880,
+      "Spodoptera cabbage": 2304,
+      "Anomala corpulenta": 53347,
+      "Spodoptera exigua": 7263,
+      "Plutella xylostella": 953,
+      "holotrichia parallela": 11675,
+      "Rice planthopper": 1511,
+      "Yellow tiger": 1686,
+      "Land tiger": 475,
+      "eight-character tiger": 168,
+      "holotrichia oblita": 108,
+      "Stem borer": 1804,
+      "Striped rice bore": 1285,
+      "Rice Leaf Roller": 1240,
+      "Spodoptera litura": 1951,
+      "Melahotus": 768
+    },
+    "per_class_mean_relative_scale": {
+      "Bollworm": 0.002793,
+      "Meadow borer": 0.002254,
+      "Gryllotalpa orientalis": 0.009513,
+      "Little Gecko": 0.005658,
+      "Agriotes fuscicollis Miwa": 0.001142,
+      "Nematode trench": 0.003232,
+      "Athetis lepigone": 0.001299,
+      "Scotogramma trifolii Rottemberg": 0.002806,
+      "Armyworm": 0.00395,
+      "Spodoptera cabbage": 0.004217,
+      "Anomala corpulenta": 0.00247,
+      "Spodoptera exigua": 0.001378,
+      "Plutella xylostella": 0.000433,
+      "holotrichia parallela": 0.002523,
+      "Rice planthopper": 0.000335,
+      "Yellow tiger": 0.003995,
+      "Land tiger": 0.006366,
+      "eight-character tiger": 0.004445,
+      "holotrichia oblita": 0.003287,
+      "Stem borer": 0.002767,
+      "Striped rice bore": 0.001793,
+      "Rice Leaf Roller": 0.001217,
+      "Spodoptera litura": 0.00458,
+      "Melahotus": 0.00157
+    },
+    "rare_classes_lt500": [
+      "Nematode trench",
+      "Land tiger",
+      "eight-character tiger",
+      "holotrichia oblita"
+    ],
+    "tiny_classes_relscale_lt0.05pct": [
+      "Plutella xylostella",
+      "Rice planthopper"
+    ],
+    "subset_definitions": {
+      "adhesion": "存在 GT 对 β > 0.05",
+      "dense": "单图实例数 > 20",
+      "rare": "类别实例数 < 500",
+      "tiny": "类别平均相对尺度 < 0.0005"
+    },
+    "subset_image_counts": {
+      "adhesion": 5863,
+      "dense": 2135
+    }
+  },
+  "assign_stats": null,
+  "g0": {
+    "verdict": "PENDING",
+    "reason": "未提供 --assign-stats，无法检验 M1。请先用 ADEA_DIAG=1 跑一次 baseline 训练（或先跑数据集级统计确认粘连/长尾事实）。"
+  }
+}

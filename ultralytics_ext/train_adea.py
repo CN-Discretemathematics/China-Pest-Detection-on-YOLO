@@ -51,7 +51,38 @@ def run(**kwargs: Any):
 
     install_all()
     model = YOLO(kwargs.pop("model"))
-    return model.train(**kwargs)
+    results = model.train(**kwargs)
+    _report_health()
+    return results
+
+
+def _report_health() -> None:
+    """打印 ALA 补丁的健康状态 —— 防止"补丁静默失效"被误当成有效结果。"""
+    try:
+        from ultralytics_ext.register import assigner_health
+
+        h = assigner_health()
+    except Exception as exc:  # pragma: no cover
+        print(f"[ADEA] 健康检查失败: {exc}")
+        return
+    if not h.get("patched"):
+        print("[ADEA] 健康检查：标签分配补丁未安装（ADEA_ALA=0 且 ADEA_DLA=0）")
+        return
+    if h.get("errors", 0) > 0:
+        print(
+            f"[ADEA] ⚠️ 健康检查：补丁异常 {h['errors']} 次并已回退 —— "
+            "**本次实验的 ALA/DLA 结果不可信**，请检查上方首次异常堆栈"
+        )
+    if h.get("reassigned", 0) == 0:
+        print(
+            "[ADEA] ⚠️ 健康检查：reassigned=0 —— 补丁未回收任何 anchor，"
+            "ALA 实际未产生作用（可能是数据中粘连样本太少，或 beta_thr/q_min 不合适）"
+        )
+    else:
+        print(
+            f"[ADEA] 健康检查：正常 —— 累计回收 anchor {h['reassigned']} 次，"
+            f"命中被饿死 GT {h['starved']} 个"
+        )
 
 
 def main() -> None:

@@ -416,6 +416,9 @@ def patch_assigner(cfg: ADEAConfig) -> Dict[str, str]:
     # ---- 补丁 2：在独占分配之后施加 ALA 配额补偿 ----
     orig_select = TaskAlignedAssigner.select_highest_overlaps
 
+    # 失效计数：补丁异常若被静默吞掉，训练照常跑但创新没生效 —— 必须让它可见
+    ade_state = {"errors": 0, "first_tb": None, "reassigned": 0, "starved": 0}
+
     def patched_select(self, mask_pos, overlaps, n_max_boxes, align_metric):
         target_gt_idx, fg_mask, mask_pos_out = orig_select(
             self, mask_pos, overlaps, n_max_boxes, align_metric
@@ -425,15 +428,14 @@ def patch_assigner(cfg: ADEAConfig) -> Dict[str, str]:
             if gt_bboxes is None:
                 return target_gt_idx, fg_mask, mask_pos_out
 
+            # 密度配额调制：**按 batch 组织**（每个 batch 元素一个逐 GT 配额 list）
             per_gt_qmin = None
             if cfg.dla_enabled:
-                # 密度配额调制：拥挤处的 GT 获得更高配额（逐 batch 元素计算）
                 per_gt_qmin = []
                 for b in range(gt_bboxes.shape[0]):
-                    q = per_gt_quota(
-                        gt_bboxes[b].detach().cpu().tolist(), cfg.ala_q_min, dla_cfg
+                    per_gt_qmin.append(
+                        per_gt_quota(gt_bboxes[b].detach().cpu().tolist(), cfg.ala_q_min, dla_cfg)
                     )
-                    per_gt_qmin.append(q)
 
             new_tgi, _fg, st = apply_ala_assign(
                 target_gt_idx,
@@ -444,6 +446,8 @@ def patch_assigner(cfg: ADEAConfig) -> Dict[str, str]:
                 ala_cfg,
                 per_gt_qmin=per_gt_qmin,
             )
+            ade_state["reassigned"] += st.n_reassigned
+            ade_state["starved"] += st.n_starved_gt
             if st.n_reassigned > 0 and cfg.verbose:
                 print(
                     f"[ADEA] ALA/DLA 生效: clusters={st.n_clusters} "
@@ -451,19 +455,51 @@ def patch_assigner(cfg: ADEAConfig) -> Dict[str, str]:
                 )
             return new_tgi, fg_mask, mask_pos_out
         except Exception as exc:  # pragma: no cover - 绝不让补丁搞崩训练
-            if cfg.verbose:
-                print(f"[ADEA] WARN 标签分配补丁异常，已回退原始分配: {exc}")
+            ade_state["errors"] += 1
+            if ade_state["first_tb"] is None:
+                import traceback
+
+                ade_state["first_tb"] = traceback.format_exc()
+                print(f"[ADEA] ERROR 标签分配补丁异常（已回退原始分配），首次堆栈：\n{ade_state['first_tb']}")
+            elif cfg.verbose and ade_state["errors"] % 500 == 0:
+                print(f"[ADEA] ERROR 标签分配补丁异常累计 {ade_state['errors']} 次")
             return target_gt_idx, fg_mask, mask_pos_out
 
     TaskAlignedAssigner.get_pos_mask = patched_get_pos_mask
     TaskAlignedAssigner.select_highest_overlaps = patched_select
     TaskAlignedAssigner._adea_patched = True
+    TaskAlignedAssigner._adea_state = ade_state
     report["assigner"] = (
         f"patched TaskAlignedAssigner.get_pos_mask + select_highest_overlaps "
         f"(ALA={cfg.ala_enabled}, DLA={cfg.dla_enabled}, "
         f"beta_thr={cfg.ala_beta_thr}, q_min={cfg.ala_q_min})"
     )
     return report
+
+
+def assigner_health() -> Dict[str, object]:
+    """读取 ALA 补丁的运行统计（用于训练后确认创新真的生效了）。
+
+    Returns
+    -------
+    dict
+        ``{errors, reassigned, starved}``：
+        * ``errors > 0`` → 补丁抛过异常并回退，**本次实验的 ALA 结果不可信**；
+        * ``reassigned == 0`` → 补丁没找到可回收的 anchor，ALA 没有产生任何作用。
+    """
+    try:
+        from ultralytics.utils.tal import TaskAlignedAssigner
+    except Exception:  # pragma: no cover
+        return {"errors": -1, "reassigned": -1, "starved": -1, "patched": False}
+    st = getattr(TaskAlignedAssigner, "_adea_state", None)
+    if st is None:
+        return {"errors": 0, "reassigned": 0, "starved": 0, "patched": False}
+    return {
+        "errors": st["errors"],
+        "reassigned": st["reassigned"],
+        "starved": st["starved"],
+        "patched": True,
+    }
 
 
 # --------------------------------------------------------------------------- #

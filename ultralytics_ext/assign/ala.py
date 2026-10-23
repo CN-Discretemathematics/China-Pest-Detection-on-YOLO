@@ -474,6 +474,8 @@ def apply_ala_assign(
         :class:`ALAConfig`。
     per_gt_qmin:
         可选逐 GT 配额（供 I2 DLA 传入密度调制后的配额）。
+        ⚠️ **按 batch 组织**：``per_gt_qmin[b]`` 是第 b 个 batch 元素的逐 GT 配额 list
+        （早期版本误传成扁平的 list，导致 ``int(list)`` 抛异常、补丁被静默回退）。
 
     Returns
     -------
@@ -513,9 +515,12 @@ def apply_ala_assign(
 
         idx_list = [int(v) for v in tgi_b.tolist()]
         ovl_list = [[float(v) for v in row] for row in ovl.tolist()]
+
+        # 逐 batch 取出该 batch 的逐 GT 配额
         qmin = None
         if per_gt_qmin is not None:
-            qmin = [int(per_gt_qmin[i]) if i < len(per_gt_qmin) else cfg.q_min for i in range(n_gt)]
+            if b < len(per_gt_qmin):
+                qmin = [int(q) for q in per_gt_qmin[b]]
 
         new_list, st = ala_core(
             idx_list,
