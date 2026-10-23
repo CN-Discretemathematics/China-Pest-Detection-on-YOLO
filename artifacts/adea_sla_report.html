@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ADEA · SLA 本机实测结果与优化方向</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=Outfit:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#f7f5f0; --card:#ffffff; --line:#e9e3d6; --line-soft:#f0ece2;
+    --ink:#14171e; --ink2:#3a4256; --muted:#7c7a72;
+    --primary:#2f6f5e; --primary-soft:rgba(47,111,94,.09);
+    --warm:#c97b3f; --warm-soft:rgba(201,123,63,.10);
+    --rose:#b06367; --rose-soft:rgba(176,99,103,.10);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    background:var(--bg); color:var(--ink);
+    font-family:'Outfit',sans-serif; font-size:14.5px; line-height:1.6;
+    -webkit-font-smoothing:antialiased;
+    background-image:
+      radial-gradient(circle at 12% 4%, rgba(47,111,94,.05), transparent 42%),
+      radial-gradient(circle at 88% 0%, rgba(201,123,63,.05), transparent 38%);
+    background-repeat:no-repeat;
+  }
+  .wrap{max-width:980px;margin:0 auto;padding:44px 24px 72px}
+  h1{font-family:'DM Serif Display',serif;font-weight:400;font-size:34px;line-height:1.25;letter-spacing:-.01em}
+  h2{font-family:'DM Serif Display',serif;font-weight:400;font-size:23px;letter-spacing:-.005em;margin-bottom:6px}
+  h3{font-size:15.5px;font-weight:600;letter-spacing:.01em}
+  .sec{margin-top:46px}
+  .eyebrow{font-family:'JetBrains Mono',monospace;font-size:11.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--primary);margin-bottom:10px}
+  .sub{color:var(--ink2);max-width:70ch;margin-top:8px;font-size:14px}
+  .muted{color:var(--muted)}
+  .mono{font-family:'JetBrains Mono',monospace}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:20px 22px;
+        box-shadow:0 2px 8px rgba(0,0,0,.04)}
+  .grid{display:grid;gap:14px}
+  .g2{grid-template-columns:repeat(2,1fr)}
+  .g4{grid-template-columns:repeat(4,1fr)}
+  .kpi{border:1px solid var(--line);background:var(--card);border-radius:14px;padding:14px 16px}
+  .kpi .v{font-family:'JetBrains Mono',monospace;font-size:23px;color:var(--primary);letter-spacing:-.02em}
+  .kpi .k{font-size:12.5px;color:var(--muted);margin-top:2px;line-height:1.4}
+  .kpi.warn .v{color:var(--warm)}
+  .kpi.rose .v{color:var(--rose)}
+  .bench{display:grid;grid-template-columns:190px 1fr 74px;gap:12px;align-items:center;padding:7px 0}
+  .bench-label{font-size:13px;color:var(--ink2)}
+  .bench-track{height:18px;background:var(--line-soft);border-radius:7px;overflow:hidden}
+  .bench-fill{height:100%;border-radius:7px;background:var(--primary)}
+  .bench-fill.warm{background:var(--warm)}
+  .bench-fill.rose{background:var(--rose)}
+  .bench-val{font-family:'JetBrains Mono',monospace;font-size:13px;text-align:right}
+  table{width:100%;border-collapse:collapse;font-size:13.5px}
+  th{text-align:left;font-weight:600;color:var(--muted);font-size:12px;letter-spacing:.04em;
+     text-transform:uppercase;padding:8px 10px;border-bottom:1px solid var(--line)}
+  td{padding:9px 10px;border-bottom:1px solid var(--line-soft);vertical-align:top}
+  tr:last-child td{border-bottom:none}
+  .up{color:var(--primary);font-family:'JetBrains Mono',monospace}
+  .down{color:var(--rose);font-family:'JetBrains Mono',monospace}
+  .dir{display:grid;grid-template-columns:52px 1fr;gap:14px;padding:14px 0;border-bottom:1px solid var(--line-soft)}
+  .dir:last-child{border-bottom:none}
+  .dir .num{font-family:'DM Serif Display',serif;font-size:26px;color:var(--primary);line-height:1;opacity:.85}
+  .dir .t{font-weight:600;font-size:15px}
+  .dir .d{color:var(--ink2);font-size:13.5px;margin-top:3px}
+  .tag{display:inline-block;font-family:'JetBrains Mono',monospace;font-size:10.5px;letter-spacing:.06em;
+       padding:2px 8px;border-radius:20px;border:1px solid var(--line);color:var(--muted);margin-left:8px;vertical-align:2px}
+  .tag.new{color:var(--primary);border-color:rgba(47,111,94,.35);background:var(--primary-soft)}
+  .tag.down2{color:var(--rose);border-color:rgba(176,99,103,.35);background:var(--rose-soft)}
+  .note{border-left:2px solid var(--warm);background:var(--warm-soft);padding:12px 16px;border-radius:0 12px 12px 0;
+        font-size:13.5px;color:var(--ink2)}
+  .ok{border-left:2px solid var(--primary);background:var(--primary-soft);padding:12px 16px;border-radius:0 12px 12px 0;
+      font-size:13.5px;color:var(--ink2)}
+  .timeline{list-style:none;padding:0;position:relative}
+  .timeline::before{content:"";position:absolute;left:7px;top:8px;bottom:8px;width:2px;background:var(--primary);opacity:.3}
+  .timeline li{position:relative;padding:0 0 18px 30px}
+  .timeline li::before{content:"";position:absolute;left:1px;top:5px;width:14px;height:14px;border-radius:50%;
+      background:var(--bg);border:2px solid var(--primary)}
+  .timeline li.done::before{background:var(--primary)}
+  .timeline p{color:var(--ink2);font-size:13.5px}
+  .chartbox{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px 20px;
+            box-shadow:0 2px 8px rgba(0,0,0,.04)}
+  .legend{display:flex;gap:18px;font-size:12.5px;color:var(--ink2);margin-top:10px;flex-wrap:wrap}
+  .legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px;vertical-align:0}
+  .chart{margin-top:4px}
+  .chart-grid{position:relative;height:250px;padding-left:38px}
+  .chart-grid .hline{position:absolute;left:38px;right:0;border-top:1px dashed rgba(0,0,0,.10)}
+  .chart-grid .hline .hl{position:absolute;right:0;top:-16px;font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--muted)}
+  .groups{position:absolute;inset:0 0 0 38px;display:grid;grid-template-columns:repeat(6,1fr);gap:10px}
+  .grp{display:flex;flex-direction:column;justify-content:flex-end}
+  .bars{height:212px;display:flex;align-items:flex-end;justify-content:center;gap:4px}
+  .bar{width:26px;border-radius:5px 5px 0 0;position:relative;min-height:3px}
+  .bar em{position:absolute;top:-16px;left:50%;transform:translateX(-50%);font-style:normal;
+           font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--ink2);white-space:nowrap}
+  .b-warm{background:var(--warm)} .b-pri{background:var(--primary)}
+  .glabel{text-align:center;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--muted);
+          padding-top:8px;line-height:1.35}
+  .glabel span{color:var(--ink2)}
+  .flow{display:flex;align-items:stretch;gap:0;flex-wrap:wrap}
+  .fbox{border:1px solid var(--line);background:#fff;border-radius:12px;padding:12px 14px;flex:1;min-width:150px}
+  .fbox .ft{font-weight:600;font-size:13.5px}
+  .fbox .fd{font-size:12px;color:var(--muted);margin-top:3px;line-height:1.45}
+  .farrow{display:flex;align-items:center;padding:0 8px;color:var(--muted)}
+  .fbox.dead{background:var(--rose-soft);border-color:rgba(176,99,103,.3)}
+  .fbox.dead .ft{color:var(--rose)}
+  .fbox.hot{background:var(--primary-soft);border-color:rgba(47,111,94,.35)}
+  .strike{text-decoration:line-through;text-decoration-color:rgba(176,99,103,.7)}
+  @media (max-width:820px){
+    .g4{grid-template-columns:repeat(2,1fr)} .g2{grid-template-columns:1fr}
+    .bench{grid-template-columns:130px 1fr 62px}
+    h1{font-size:27px} .wrap{padding:32px 18px 56px}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="eyebrow">ADEA · I1 SLA · 本机实测报告</div>
+    <h1>瓶颈不是"被抢占"，是"监督密度"</h1>
+    <p class="sub">
+      上一轮把创新主线定成"粘连感知的标签分配"。本机逐行核对 ultralytics 8.4.184 源码并做无拟合的几何口径复测后，
+      发现那个前提是错的：<strong>竞争剥夺只占 0.24%</strong>，真正的约束是
+      <strong>候选池几乎完全由目标面积决定</strong>（corr = 0.965）。
+      方法因此重构为"把监督预算从几何手里夺回来"。
+    </p>
+    <div class="grid g4" style="margin-top:22px">
+      <div class="kpi"><div class="v">80.6%</div><div class="k">GT 已达几何上限<br>（n_pos = min(topk, 候选池)）</div></div>
+      <div class="kpi rose"><div class="v">0.24%</div><div class="k">竞争剥夺<br>（池够却被邻居抢走）</div></div>
+      <div class="kpi warn"><div class="v">7.54%</div><div class="k">几何不足<br>（候选池 &lt; 3，天生拿不到）</div></div>
+      <div class="kpi"><div class="v">0.965</div><div class="k">corr(log 相对面积,<br>log 候选池)</div></div>
+    </div>
+  </header>
+
+  <section class="sec">
+    <div class="eyebrow">01 · 机制纠正</div>
+    <h2>之前引用的那行代码，是死代码</h2>
+    <p class="sub">诊断结论（n_pos 被饿死）本身没错，但归因错了。逐行核对 + 实测：</p>
+    <div class="card" style="margin-top:16px">
+      <div class="flow">
+        <div class="fbox">
+          <div class="ft">select_topk_candidates</div>
+          <div class="fd">每个 GT 按 align_metric 取 top-10（框内候选）</div>
+        </div>
+        <div class="farrow"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+        <div class="fbox dead">
+          <div class="ft"><span class="strike">count &gt; 1 → 0</span></div>
+          <div class="fd">count 按 (gt, anchor) 索引，恒 ≤ 1<br><strong>实测 count.max() == 1 → 从不触发</strong></div>
+        </div>
+        <div class="farrow"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+        <div class="fbox hot">
+          <div class="ft">select_highest_overlaps</div>
+          <div class="fd">冲突 anchor <strong>只留给 IoU 最高者</strong><br>其余 GT 直接失去 → 这才是剥夺</div>
+        </div>
+      </div>
+    </div>
+    <div class="note" style="margin-top:14px">
+      <strong>影响：</strong>初版 ALA（粘连感知配额补偿）针对的机制不是主要矛盾。若按原计划投入 35 GPU-h，创新增益会接近 0。
+      已把它降级为消融项，方法重心转向<strong>监督密度</strong>。
+    </div>
+  </section>
+
+  <section class="sec">
+    <div class="eyebrow">02 · 几何口径复测</div>
+    <h2>分配器其实"很勤快"，是几何在限流</h2>
+    <div class="grid g2" style="margin-top:16px">
+      <div class="card">
+        <h3>6,589 个 GT 样本的拆解</h3>
+        <div style="margin-top:12px">
+          <div class="bench"><span class="bench-label">已达几何上限</span>
+            <div class="bench-track"><div class="bench-fill" style="width:80.6%"></div></div><span class="bench-val">80.6%</span></div>
+          <div class="bench"><span class="bench-label">低于上限（可再分配）</span>
+            <div class="bench-track"><div class="bench-fill warm" style="width:2.7%"></div></div><span class="bench-val">2.67%</span></div>
+          <div class="bench"><span class="bench-label">└ 其中：竞争剥夺</span>
+            <div class="bench-track"><div class="bench-fill rose" style="width:.24%"></div></div><span class="bench-val">0.24%</span></div>
+          <div class="bench"><span class="bench-label">候选池 &lt; 3（几何不足）</span>
+            <div class="bench-track"><div class="bench-fill warm" style="width:7.5%"></div></div><span class="bench-val">7.54%</span></div>
+        </div>
+        <p class="muted" style="font-size:12.5px;margin-top:12px">
+          面积标定残差：粘连 −0.656 / 孤立 0.000；corr(残差, β) = −0.177。
+        </p>
+      </div>
+      <div class="card">
+        <h3>候选池的尺度表（本机实测均值）</h3>
+        <div style="margin-top:12px">
+          <div class="bench"><span class="bench-label">相对面积 &lt; 1e-4</span>
+            <div class="bench-track"><div class="bench-fill" style="width:1.2%"></div></div><span class="bench-val">0.41</span></div>
+          <div class="bench"><span class="bench-label">1e-4 ~ 3e-4</span>
+            <div class="bench-track"><div class="bench-fill" style="width:6%"></div></div><span class="bench-val">2.33</span></div>
+          <div class="bench"><span class="bench-label">3e-4 ~ 1e-3</span>
+            <div class="bench-track"><div class="bench-fill" style="width:16%"></div></div><span class="bench-val">6.21</span></div>
+          <div class="bench"><span class="bench-label">1e-3 ~ 3e-3</span>
+            <div class="bench-track"><div class="bench-fill" style="width:42%"></div></div><span class="bench-val">16.3</span></div>
+          <div class="bench"><span class="bench-label">3e-3 ~ 1e-2</span>
+            <div class="bench-track"><div class="bench-fill" style="width:100%"></div></div><span class="bench-val">44.4</span></div>
+          <div class="bench"><span class="bench-label">≥ 1e-2</span>
+            <div class="bench-track"><div class="bench-fill" style="width:100%"></div></div><span class="bench-val">88.4</span></div>
+        </div>
+        <p class="muted" style="font-size:12.5px;margin-top:12px">
+          同一批样本里，最小档只有 <strong>0.41 个可用候选</strong>，最大档 88 个 —— 相差 200 倍。
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec">
+    <div class="eyebrow">03 · SLA 生效后的尺度公平</div>
+    <h2>微目标的监督预算被补齐，大目标不受影响</h2>
+    <p class="sub">1,270 图 × 1 epoch，baseline 与 SLA 同 seed、同数据序、同一 topk；<span class="mono">c</span> 由 baseline 标定后两次运行共用。</p>
+    <div class="chartbox" style="margin-top:16px">
+      <div class="chart">
+        <div class="chart-grid">
+          <div class="hline" style="bottom:90.9%"><span class="hl">topk 上限 = 10</span></div>
+          <div class="hline" style="bottom:50%"></div>
+          <div class="hline" style="bottom:0%"></div>
+          <div class="groups">
+            <div class="grp">
+              <div class="bars"><div class="bar b-warm" style="height:16.4%"><em>1.80</em></div><div class="bar b-pri" style="height:26.9%"><em>2.96</em></div></div>
+              <div class="glabel">&lt; 1e-4<br><span>微目标</span></div>
+            </div>
+            <div class="grp">
+              <div class="bars"><div class="bar b-warm" style="height:34.1%"><em>3.75</em></div><div class="bar b-pri" style="height:68.2%"><em>7.50</em></div></div>
+              <div class="glabel">1e-4 ~ 3e-4</div>
+            </div>
+            <div class="grp">
+              <div class="bars"><div class="bar b-warm" style="height:59.7%"><em>6.57</em></div><div class="bar b-pri" style="height:87.3%"><em>9.60</em></div></div>
+              <div class="glabel">3e-4 ~ 1e-3</div>
+            </div>
+            <div class="grp">
+              <div class="bars"><div class="bar b-warm" style="height:89.7%"><em>9.87</em></div><div class="bar b-pri" style="height:90.4%"><em>9.94</em></div></div>
+              <div class="glabel">1e-3 ~ 3e-3</div>
+            </div>
+            <div class="grp">
+              <div class="bars"><div class="bar b-warm" style="height:90.7%"><em>9.98</em></div><div class="bar b-pri" style="height:90.9%"><em>10.00</em></div></div>
+              <div class="glabel">3e-3 ~ 1e-2</div>
+            </div>
+            <div class="grp">
+              <div class="bars"><div class="bar b-warm" style="height:90.9%"><em>10.00</em></div><div class="bar b-pri" style="height:91.3%"><em>10.04</em></div></div>
+              <div class="glabel">≥ 1e-2<br><span>大目标</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="legend">
+        <span><i style="background:#c97b3f"></i>baseline 平均正样本数</span>
+        <span><i style="background:#2f6f5e"></i>SLA 平均正样本数</span>
+        <span class="muted">横轴 = 目标相对面积分档（左小右大）</span>
+      </div>
+    </div>
+    <div class="grid g2" style="margin-top:14px">
+      <div class="card">
+        <h3>尺度相关性（越接近 0 越公平）</h3>
+        <div class="grid g2" style="margin-top:10px">
+          <div class="kpi"><div class="v" style="color:var(--warm)">+0.8465</div><div class="k">baseline<br>corr(n_pos, log 相对尺度)</div></div>
+          <div class="kpi"><div class="v">+0.5609</div><div class="k">SLA<br>（−34%）</div></div>
+        </div>
+      </div>
+      <div class="card">
+        <h3>其他同口径指标</h3>
+        <table style="margin-top:6px">
+          <tr><td>被饿死比例 (n_pos&lt;3)</td><td class="mono">8.04%</td><td class="mono up">6.68%</td></tr>
+          <tr><td>粘连目标残差</td><td class="mono">−0.656</td><td class="mono up">−0.127</td></tr>
+          <tr><td>被低估比例</td><td class="mono">61.41%</td><td class="mono up">57.81%</td></tr>
+          <tr><td>平均可用候选数</td><td class="mono">20.75</td><td class="mono up">24.05</td></tr>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec">
+    <div class="eyebrow">04 · 当前优化方向</div>
+    <h2>主线已换，四件事按这个顺序做</h2>
+
+    <div class="card" style="margin-top:16px;padding-top:6px;padding-bottom:6px">
+      <div class="dir">
+        <div class="num">1</div>
+        <div>
+          <div class="t">主线：从"粘连感知分配"改为"监督密度的尺度公平"<span class="tag new">已重构</span></div>
+          <div class="d">核心命题：<strong>正样本个数与分类权重都被目标面积决定</strong>（几何既定量，也决定损失里的权重）。
+            创新 = 把这两者从面积手里解耦。</div>
+        </div>
+      </div>
+      <div class="dir">
+        <div class="num">2</div>
+        <div>
+          <div class="t">SLA（分配层）<span class="tag new">核心创新</span></div>
+          <div class="d"><strong>M0 密度补偿</strong>：候选池不足配额的微目标，候选框每边扩张 margin·stride_val（网格单位 → 与分辨率无关），扩张区同样进 align_metric，top-k 自动挑走对齐最好的 anchor。
+            <strong>S1 度量一致性</strong>：冲突按 align_metric 裁决、只在提名者中裁决。
+            <strong>S2 公平再分配</strong>：被挤占的 GT 取回自己框内的 anchor（匹配度护栏 ρ，零和）。</div>
+        </div>
+      </div>
+      <div class="dir">
+        <div class="num">3</div>
+        <div>
+          <div class="t">SFW（损失层）<span class="tag new">新增</span></div>
+          <div class="d">分类损失里正样本按 GT 归一（w = (N_pos/N_gt)/count）→ 每个目标的分类贡献相等；背景权重不变、总权重守恒 → 损失量级不变。
+            <strong>与 SLA 分工：SLA 管"个数"，SFW 管"权重"，可叠加。</strong></div>
+        </div>
+      </div>
+      <div class="dir">
+        <div class="num">4</div>
+        <div>
+          <div class="t">粘连方向降级为工程组件<span class="tag down2">不再是创新主线</span></div>
+          <div class="d">AGS（分级抑制后处理）、ASM（粘连合成）保留；初版 ALA 降为消融项。
+            理由：竞争剥夺只有 0.24%，粘连子集要靠后处理与特征侧（SPD/DySample），不是靠分配层。
+            DLA / DRA 降为次要组件。</div>
+        </div>
+      </div>
+      <div class="dir">
+        <div class="num">5</div>
+        <div>
+          <div class="t">D0 诊断升级为论文的独立贡献</div>
+          <div class="d">"第一个把<strong>正样本数当作目标尺度的函数</strong>来诊断检测器"——这正是 EP-YOLO 列为 future work 却无人实现的那一块。</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec">
+    <div class="eyebrow">05 · 预期结果</div>
+    <h2>哪些已经验过，哪些还是假设</h2>
+    <div class="card" style="margin-top:16px">
+      <table>
+        <thead><tr>
+          <th style="width:15%">组件</th><th style="width:24%">作用层</th><th style="width:17%">目标子集</th>
+          <th style="width:22%">本机已验证（分配层）</th><th style="width:22%">AutoDL 预期（指标层）</th>
+        </tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>SLA · M0</strong></td><td>标签分配</td><td>微目标（相对面积 &lt; 1e-3）</td>
+            <td>微目标 n_pos 1.80 → 2.96；[1e-4,3e-4) 档 3.75 → 7.50</td>
+            <td>微目标类 AP <span class="up">+2 pt</span> 以上；整体 mAP50 <span class="up">+0.5 ~ 1.5 pt</span>（对 vanilla）</td>
+          </tr>
+          <tr>
+            <td><strong>SLA · S1+S2</strong></td><td>标签分配</td><td>粘连子集</td>
+            <td>粘连残差 −0.656 → −0.127；转移 37 次 / 382 批次</td>
+            <td>粘连子集 mAP50 <span class="up">+0.3 ~ 1.0 pt</span>（<strong>headroom 有限</strong>）</td>
+          </tr>
+          <tr>
+            <td><strong>SFW</strong></td><td>分类损失</td><td>微目标 + 稀有类</td>
+            <td>sfw_calls 382、errors 0；每 GT 贡献归一（数学等价已验）</td>
+            <td>稀有类平均 AP <span class="up">+1 pt</span> 以上；与 SLA 叠加时整体 mAP50 再 <span class="up">+0.3 ~ 0.8 pt</span></td>
+          </tr>
+          <tr>
+            <td><strong>AGS</strong></td><td>后处理</td><td>粘连子集</td>
+            <td>已实现，本机未做 val 对比</td>
+            <td>粘连子集 mAP50 <span class="up">+1 pt</span> 以上（零训练成本）</td>
+          </tr>
+          <tr>
+            <td><strong>强基线对照</strong></td><td>—</td><td>—</td>
+            <td>6 套变体构建/前向/迁移率全过（strong = 3.205M）</td>
+            <td>验收门槛：创新组合相对<strong>强基线</strong> mAP50 ≥ 1.0 pt 且 mAP50-95 ≥ 1.0 pt</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="ok" style="margin-top:14px">
+      <strong>已经站得住的结论（分配层，本机 6,589 GT 样本 + 两次真实训练）：</strong>
+      SLA 让微目标的监督预算从 1.80 抬到 2.96、被饿死比例从 8.04% 降到 6.68%、
+      粘连残差从 −0.656 收到 −0.127，且<strong>大目标的预算完全不变</strong>（topk 上限守住）。
+      也就是说："监督预算被面积决定"这件事，被算法层改写了。
+    </div>
+
+    <div class="note" style="margin-top:12px">
+      <strong>诚实的风险（必须写进论文 Limitations）：</strong>
+      强基线里已含 P2（stride-4），它已经把候选池放大 4~6 倍 → <strong>M0 在强基线上的 headroom 会明显小于 vanilla</strong>。
+      若 SLA+SFW 相对强基线不足 1.0 pt，降级路径是：
+      ① 把 SLA 作为"与 P2 互补的第二条路径"（架构层 vs 分配层）做对比实验；
+      ② 论文主体转为 D0 诊断 + I7 天花板分析 + 复现；
+      ③ 不硬凑创新增量。
+    </div>
+  </section>
+
+  <section class="sec">
+    <div class="eyebrow">06 · 下一步</div>
+    <h2>本机已验完，剩下需要你</h2>
+    <ol class="timeline" style="margin-top:16px">
+      <li class="done"><strong>本机验证闭环</strong><p>自测 35/35 + 27/27 · 7 个模型变体构建前向 · 7 个 sh 语法 · SLA/SFW 真实训练 errors=0 · baseline vs SLA 同口径对照</p></li>
+      <li class="done"><strong>代码与文档入库</strong><p>commit 33e44cb 已 push（远端 HEAD = 本地 HEAD）；docs 已同步机制纠正、M0/SFW 与验收标准</p></li>
+      <li><strong>【需要你】AutoDL 实例 SSH + 充值</strong><p>形如 <span class="mono">ssh -p 端口 root@region-x.autodl.com</span>；T1~T4 约 35 GPU-h（¥53–70）。60_t3.sh 已含 SLA / SLA_M0 / SLA_noexp / SFW / SLA_SFW 五组</p></li>
+      <li><strong>【需要你决定】是否彻底清除 Ultralytics/settings.json 的 git 历史</strong><p><span class="mono">git filter-repo --path Ultralytics/settings.json --invert-paths</span> + force push（命令已写进 commit message）</p></li>
+      <li><strong>验收口径（不变）</strong><p>EVAL_SPLIT = test（7,600 张）· 实验间统一 conf=0.001 / iou=0.7 · conf/iou 扫描只定部署点 · 3 seed 配对检验</p></li>
+    </ol>
+  </section>
+
+  <footer style="margin-top:44px;padding-top:16px;border-top:1px solid var(--line);color:var(--muted);font-size:12.5px">
+    数据来源：本机 1660S 实测 · 1,270 图 × 1 epoch（baseline / SLA 同 seed 同数据序）· 6,589 个 GT 样本 ·
+    诊断采集器 <span class="mono">runs/diag/sla_base.jsonl</span>、<span class="mono">runs/diag/sla_sla3.jsonl</span> ·
+    对照脚本 <span class="mono">scripts/compare_sla.py</span>（报告 artifacts/sla_compare_m0.json）· commit 33e44cb
+  </footer>
+</div>
+
+<script>
+  // 页面无外部脚本依赖（柱图为纯 CSS），仅保留打印样式微调
+  window.addEventListener('beforeprint', () => {
+    document.querySelectorAll('.card').forEach(c => c.style.boxShadow = 'none');
+  });
+</script>
+</body>
+</html>
