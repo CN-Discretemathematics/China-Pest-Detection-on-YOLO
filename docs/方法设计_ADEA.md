@@ -476,10 +476,42 @@ SFW 让"权重"更公平（每个目标的分类贡献相等）—— 两者都�
 | 组件 | 前人出处（必须引用） | 本项目的增量 | 对照实验（必须做） |
 |---|---|---|---|
 | **M0 候选区扩展** | **YOLOv7 的 allowed area**：粗粒度用 GT 中心周围 **5×5** 网格、细粒度用 **3×3** 中心网格做正样本分配；ultralytics 自身的 `stride_val` 下限规则其实是它的退化版本 | ① **配额驱动**：只对"候选池 < 配额"的目标扩张，而不是对所有目标固定扩；② 边距以 **stride 为单位**（网格单位 → 与分辨率无关）；③ 配额默认**对齐 topk** → **无自由参数**；④ 期望份额由几何算出，**不用拟合的经验表** | `ADEA_SLA_EXPAND_MODE=fixed` 实现 **YOLOv7 式固定邻域**对照 → 证明"配额驱动"优于"固定网格"（已接入 `60_t3.sh` 的 `strong_SLA_fixed`） |
-| **S1 度量一致性** | **TAL / TaskAlignedAssigner**（ultralytics 8.x）：用 `align_metric` 选 top-k，却用**纯 IoU** 裁决冲突 | 把裁决统一到与 top-k 相同的度量，并限制在**提名者**内裁决（不越权塞给没提名它的 GT） | `ADEA_SLA_CRITERION=overlap` + `ADEA_SLA_CLAIM_ONLY=0` 可逐 anchor 复刻 vanilla（自测里已有等价性断言） |
-| **S2 公平再分配** | 长尾检测的公平化思路同族：**Seesaw Loss**(ICCV'21)、**Equalization Loss**(CVPR'20)、LDAM | 作用在**空间/尺度**轴而非类别轴；零和转移 + max-min 公平 + 匹配度护栏 | `ADEA_SLA_S2=0` 消融；并诚实记录 headroom 很小（0.24% 竞争剥夺） |
-| **SFW 尺度公平权重** | **Balanced L1 Loss**(CVPR'19, Microsoft)：平衡大小目标在**回归项**里的贡献 | 处理**分类项**里"**正样本个数**"这条通道（此前空白）；权重守恒 → 损失量级不变 | 与 Balanced-L1 式回归尺度均衡做正交对照 |
-| **诊断 D0** | 动态标签分配家族：**ATSS**(CVPR'20)、**PAA**(ECCV'20)、**SimOTA**(CVPR'21)、TAL | 第一次把"每 GT 正样本数"作为**目标尺度的函数**做量化诊断，并用**无拟合几何口径**区分"竞争剥夺(0.24%)"与"几何不足(7.54%)" | 本报告即证据（`scripts/compare_sla.py` 可复现） |
+| **S1 度量一致性** | **TAL / TaskAlignedAssigner**（ultralytics 8.x，源自 YOLOv8）：用 `align_metric` 选 top-k，却用**纯 IoU** 裁决冲突 | 把裁决统一到与 top-k 相同的度量，并限制在**提名者**内裁决（不越权塞给没提名它的 GT） | `ADEA_SLA_CRITERION=overlap` + `ADEA_SLA_CLAIM_ONLY=0` 可逐 anchor 复刻 vanilla（自测里已有等价性断言） |
+| **S2 公平再分配** | 长尾检测的公平化思路同族：**Equalization Loss**(CVPR'20)、**Seesaw Loss**(CVPR'21)、**EQLv2**(CVPR'21)、LDAM | 作用在**空间/尺度**轴而非类别轴；零和转移 + max-min 公平 + 匹配度护栏 | `ADEA_SLA_S2=0` 消融；并诚实记录 headroom 很小（0.24% 竞争剥夺） |
+| **SFW 尺度公平权重** | **Libra R-CNN / Balanced L1 Loss**(CVPR'19)：平衡大小目标在**回归项**里的贡献 | 处理**分类项**里"**正样本个数**"这条通道（此前空白）；权重守恒 → 损失量级不变 | 与 Balanced-L1 式回归尺度均衡做正交对照 |
+| **诊断 D0** | 动态标签分配家族：**ATSS**(CVPR'20)、**PAA**(ECCV'20)、**SimOTA / YOLOX**(CVPR'21)、TAL | 第一次把"每 GT 正样本数"作为**目标尺度的函数**做量化诊断，并用**无拟合几何口径**区分"竞争剥夺(0.24%)"与"几何不足(7.54%)" | 本报告即证据（`scripts/compare_sla.py` 可复现） |
+
+**参考文献 DOI（已逐条用 Crossref / OpenAlex / DBLP / Springer / arXiv API 核验，2026-10-23）**
+
+| # | 文献 | DOI / 标识 |
+|---|---|---|
+| 1 | Wang Q-J et al. *Pest24: A large-scale very small object data set of agricultural pests for multi-target detection.* Comput. Electron. Agric. 175:105585 (2020) | `10.1016/j.compag.2020.105585` |
+| 2 | Tang Y et al. *EP-YOLO: An Enhanced Lightweight Model for Micro-Pest Detection in Agricultural Light-Trap Environments.* Sensors 26(9):2607 (2026) | `10.3390/s26092607` |
+| 3 | Tang Z et al. *AEP-PEST.* J. Real-Time Image Process. 23:106 (2026) | `10.1007/s11554-026-01901-4` |
+| 4 | Liu J et al. *YOLO-DCPG.* Front. Plant Sci. (2025) | `10.3389/fpls.2025.1716703` |
+| 5 | **Wang C-Y et al. *YOLOv7: Trainable Bag-of-Freebies…* CVPR 2023**（M0 的直接前人：allowed area） | `10.1109/CVPR52729.2023.00721`（arXiv:2207.02696） |
+| 6 | **Pang J et al. *Libra R-CNN: Towards Balanced Learning for Object Detection.* CVPR 2019**（Balanced L1 Loss 出处） | `10.1109/CVPR.2019.00091` |
+| 7 | **Zhang S et al. *Bridging the Gap…via Adaptive Training Sample Selection*（ATSS）. CVPR 2020** | `10.1109/CVPR42600.2020.00978`（arXiv:1912.02424） |
+| 8 | **Kim K, Lee H S. *Probabilistic Anchor Assignment with IoU Prediction*（PAA）. ECCV 2020** | `10.1007/978-3-030-58595-2_22`（arXiv:2007.08103） |
+| 9 | **Ge Z et al. *YOLOX: Exceeding YOLO Series in 2021*（SimOTA）. CVPR 2021** | arXiv `10.48550/arXiv.2107.08430`（CVPR 会议版 DOI 未核实，勿凭记忆填） |
+| 10 | **Tan J et al. *Equalization Loss for Long-Tailed Object Recognition.* CVPR 2020** | `10.1109/CVPR42600.2020.01168` |
+| 11 | **Tan J et al. *Equalization Loss v2.* CVPR 2021** | `10.1109/CVPR46437.2021.00173` |
+| 12 | **Wang J et al. *Seesaw Loss for Long-Tailed Instance Segmentation.* CVPR 2021** | `10.1109/CVPR46437.2021.00957` |
+| 13 | Cui Y et al. *Class-Balanced Loss Based on Effective Number of Samples.* CVPR 2019 | `10.1109/CVPR.2019.00949` |
+| 14 | Feng C et al. *Exploring Classification Equilibrium in Long-Tailed Object Detection.* ICCV 2021 | `10.1109/ICCV48922.2021.00340` |
+| 15 | Sunkara R, Luo T. *No More Strided Convolutions or Pooling*（SPD-Conv） | arXiv `10.48550/arXiv.2202.01248` |
+| 16 | Yang Z et al. *Efficient Multi-Scale Attention Module*（EMA） | arXiv `10.48550/arXiv.2303.11366` |
+| 17 | Liao W et al. *Learning to Upsample by Learning to Sample*（DySample）. ICLR 2023 | arXiv `10.48550/arXiv.2308.07096` |
+| 18 | Hafeez H. *YOLO11-4K*（P2 检测头） | arXiv `10.48550/arXiv.2512.16493` |
+| 19 | Li A et al. *Forestpest-YOLO* | arXiv `10.48550/arXiv.2510.00547` |
+| 20 | Lin T-Y et al. *Focal Loss for Dense Object Detection.* ICCV 2017 | `10.1109/ICCV.2017.324` |
+
+> ⚠️ **两个必须知道的坑**：
+> ① 我最初凭记忆写的 `10.1109/CVPR.2019.00941`（Balanced L1）与 `10.1109/ICCV48922.2021.00772`（Seesaw）**都是错的**——
+>    Crossref 显示它们分别指向 ESPNetv2 和一篇 BatchNorm 对抗样本论文。**DOI 必须逐条核验后再写进论文**。
+> ② YOLOX 的 CVPR 会议版 DOI 我未核实到（`10.1109/CVPR46437.2021.00872` 实际指向另一篇 3D 论文），
+>    因此表中只给已核实的 arXiv DOI。
+
 
 **因此论文里创新点的正确写法**（不要写成 "we propose a novel label assignment algorithm"）：
 
