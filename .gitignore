@@ -86,6 +86,7 @@ pip-build-tracker-*/
 pip-ephem-wheel-cache-*/
 pip-install-*/
 pip-unpack-*/
+matplotlib-*/
 
 # Pest24 原始论文（Elsevier 付费墙）及其全文提取 —— **不随公开仓库再分发**，
 # 引用见 README「引用与致谢」（DOI 10.1016/j.compag.2020.105585）
