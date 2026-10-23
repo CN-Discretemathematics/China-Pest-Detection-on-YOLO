@@ -21,13 +21,16 @@ DySample 额外预测一张**偏移图 (offset)** 与一张**调制掩码 (mask)
 
 与 Ultralytics ``nn.Upsample`` 的接口对齐
 ----------------------------------------
-``DySample(c1, c2, scale=2)`` 在 yaml 中可替换 ``nn.Upsample``：
+``DySample(c1, c2, scale)`` 在 yaml 中可替换 ``nn.Upsample``：
 
     # 标准:  [-1, 1, nn.Upsample, [None, 2, 'nearest']]
-    # DySample: [-1, 1, DySample, [c_in, c_out, 2]]     # c_out = c_in
+    # DySample: [-1, 1, DySample, [<输入层通道数>, 2]]   # c_out = c_in
 
-若 ultralytics 的 ``parse_model`` 对 ``nn.Upsample`` 有特殊处理，
-本模块同时提供 ``fuse()`` 兼容入口（见 ``ultralytics_ext/register.py``）。
+⚠️ **签名契约**：Ultralytics ``parse_model`` 只对 ``base_modules`` 中的模块
+按 ``[c1, c2_scaled, *args[1:]]`` 传参；自定义模块必须
+**注册进 ``base_modules``**（见 ``ultralytics_ext/register.py``），
+否则会走 ``else`` 分支（输出通道被强制等于输入，args 原样传入）。
+本模块因此把 ``scale`` 放在第 3 个位置，以匹配 ``[c1, c2, scale]`` 的调用形式。
 """
 
 from __future__ import annotations
@@ -60,11 +63,11 @@ class DySample(nn.Module):
         self,
         in_channels: int,
         out_channels: int | None = None,
+        scale: int = 2,
         kernel_size: int = 3,
         stride: int = 1,
         padding: int | None = None,
         groups: int = 1,
-        scale: int = 2,
         sampling_type: str = "bilinear",
         align_corners: bool = False,
     ):

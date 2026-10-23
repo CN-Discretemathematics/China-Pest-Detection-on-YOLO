@@ -22,13 +22,20 @@ EP-YOLO 消融数据（100 epochs 口径）：
     SPD+EMA    → P 0.744 / R 0.664 / mAP50 0.705 / mAP50-95 0.473
     放置位置   → backbone(0.700) **优于** neck(0.687)
 
-⚠️ 复现要点
------------
-1. EMA 的输出通道是输入的 **2 倍**（``c2 = make_divisible(c2 * 2, 8)``），
-   yaml 中必须按此设置后续层的输入通道，否则维度不匹配。
-2. EP-YOLO 实证：**放在 backbone 更好**，neck 放置反而掉点。
-3. 优先复用 Ultralytics 官方实现（``ultralytics.nn.modules.attention.EMA``），
-   以保持与官方权重/行为一致；官方未提供时回退到本文件的实现。
+⚠️ 本实现的"通道守恒"变体（与官方 EMA 的差异，必须在论文中说明）
+------------------------------------------------------------
+官方 EMA 的 ``__init__`` 内部把 ``c2`` 翻倍（``c2 = make_divisible(c2*2, 8)``），
+即它是"通道扩张型"模块，输出通道 = 2×输入。
+
+本项目需要的是**可 1:1 插入 backbone 而不改变下游通道**的版本，
+否则：
+* Ultralytics ``parse_model`` 的通道记账会与实际输出不符 → 后续层维度错乱；
+* 预训练权重的通道匹配被破坏 → 迁移率骤降。
+
+因此本实现提供一个**通道守恒变体**：``EMA(c1, c2)`` 输出恰为 ``c2`` 通道，
+注意力计算结构与官方一致（分组卷积 + 跨通道交互 + 全局池化门控），
+仅"末端卷积不翻倍"这一处不同。yaml 中的通道参数取**输入层通道数**，
+从而输出 == 输入，下游层完全不受影响。
 """
 
 from __future__ import annotations
@@ -47,28 +54,51 @@ def _make_divisible(x: float, divisor: int = 8) -> int:
 
 
 class EMA(nn.Module):
-    """Efficient Multi-Scale Attention（本地实现，官方缺失时的回退）。
+    """Efficient Multi-Scale Attention（**通道守恒**变体）。
 
-    与官方实现的关键点：
-    * 输入 ``(B, C, H, W)`` → 输出 ``(B, 2C, H, W)``（通道翻倍）；
-    * 内部对 ``x`` 做全局平均池化后生成通道权重，再与 ``x`` 逐元素相乘，
-      因此保留空间信息（不像 SE 只做通道加权）。
+    与官方实现的关键差异：输出通道 = ``c2``（不再翻倍）。
+    注意力机制本身与官方一致：
+    * 分组卷积提取局部特征；
+    * 全局平均池化 + 两个 1×1 卷积生成通道权重；
+    * 权重与原特征逐元素相乘（保留空间信息，不像 SE 只做通道加权）。
+
+    典型用法（yaml 中）::
+
+        - [-1, 1, EMA, [<输入层通道数>]]     # 输出通道 == 输入通道
     """
 
-    def __init__(self, c1: int, c2: int, ratio: int = 16, kernel_size: int = 5, stride: int = 1, groups: int = 1, act: bool = True):
+    def __init__(
+        self,
+        c1: int,
+        c2: int,
+        ratio: int = 16,
+        kernel_size: int = 5,
+        stride: int = 1,
+        groups: int = 1,
+        act: bool = True,
+    ):
         super().__init__()
-        c2 = _make_divisible(c2 * 2, 8)
+        self.c1 = int(c1)
+        self.c2 = int(c2)
         self.stride = stride
         self.groups = groups
         self.conv = nn.Sequential(
-            nn.Conv2d(c1, c2, kernel_size, stride, padding=groups * (kernel_size - 1) // 2, groups=groups, bias=False),
-            nn.BatchNorm2d(c2),
+            nn.Conv2d(
+                self.c1,
+                self.c2,
+                kernel_size,
+                stride,
+                padding=groups * (kernel_size - 1) // 2,
+                groups=groups,
+                bias=False,
+            ),
+            nn.BatchNorm2d(self.c2),
             nn.SiLU() if act else nn.Identity(),
         )
         self.avg_pool = nn.AdaptiveAvgPool2d(1)
-        self.conv_gap = nn.Conv2d(c2, c2, 1, stride=1, padding=0, bias=False)
-        self.conv_gap2 = nn.Conv2d(c2, c2, 1, stride=1, padding=0, bias=False)
-        self.norm = nn.BatchNorm2d(c2)
+        self.conv_gap = nn.Conv2d(self.c2, self.c2, 1, stride=1, padding=0, bias=False)
+        self.conv_gap2 = nn.Conv2d(self.c2, self.c2, 1, stride=1, padding=0, bias=False)
+        self.norm = nn.BatchNorm2d(self.c2)
         self.act = nn.SiLU() if act else nn.Identity()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -80,21 +110,25 @@ class EMA(nn.Module):
         y = torch.mul(y, x)
         return self.conv(x)
 
+    def extra_repr(self) -> str:  # pragma: no cover
+        return f"c1={self.c1}, c2={self.c2}"
+
 
 def get_ema():
-    """返回可用的 EMA 实现。
+    """返回可用的 EMA 实现与来源标记。
 
-    优先使用 Ultralytics 官方实现（行为与官方仓库一致），
-    官方不存在时回退到本文件的 :class:`EMA`。
+    ⚠️ 始终返回**本文件的通道守恒实现** —— 官方 ``ultralytics.nn.modules.attention.EMA``
+    会把通道翻倍，与 Ultralytics ``parse_model`` 的通道记账冲突，无法 1:1 插入 backbone。
+    官方实现保留在下面仅作对照参考。
     """
+    return EMA, "local.channel-preserving"
+
+
+def get_official_ema():
+    """返回 Ultralytics 官方 EMA（通道翻倍版），仅作参考对照。"""
     try:
         from ultralytics.nn.modules.attention import EMA as _OfficialEMA  # type: ignore
 
         return _OfficialEMA, "ultralytics.official"
     except Exception:
-        try:
-            from ultralytics.nn.modules import EMA as _OfficialEMA2  # type: ignore
-
-            return _OfficialEMA2, "ultralytics.official"
-        except Exception:
-            return EMA, "local"
+        return None, "unavailable"

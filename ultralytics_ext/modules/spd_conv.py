@@ -74,16 +74,24 @@ class SPDConv(nn.Module):
 
         # 标准:  [-1, 1, Conv, [32, 3, 2]]     # 3->32, stride 2
         # SPD  :  [-1, 1, SPDConv, [32, 3, 2]] # 3->32, stride 2 (空间分辨率相同)
+
+    ⚠️ **内部卷积必须是 stride=1**
+    Space-to-Depth 本身已经把 H×W 变成 (H/2)×(W/2)；
+    若后续卷积再用 stride=2，空间会被**二次下采样**（H/4），
+    导致与 neck 的其它分支尺寸不匹配（Concat 时报
+    "Sizes of tensors must match except in dimension 1"）。
+    因此 yaml 里沿用原 Conv 的 ``s=2``，但内部卷积固定 stride=1。
     """
 
     def __init__(self, c1: int, c2: int, k: int = 3, s: int = 1, p: int | None = None, g: int = 1, act: bool = True):
         super().__init__()
         self.c1, self.c2 = int(c1), int(c2)
+        self.s = s  # 记录 yaml 中的 stride（语义上已由 SpaceTo-Depth 实现）
         self.spd = SpaceToDepth(2)
-        # SpaceToDepth 后通道变为 4*c1
+        # SpaceToDepth 后通道变为 4*c1；卷积 stride 固定为 1（避免二次下采样）
         conv_pad = (k - 1) // 2 if p is None else p
         self.conv = nn.Sequential(
-            nn.Conv2d(4 * int(c1), int(c2), k, s, conv_pad, groups=g, bias=False),
+            nn.Conv2d(4 * int(c1), int(c2), k, 1, conv_pad, groups=g, bias=False),
             nn.BatchNorm2d(int(c2)),
             nn.SiLU() if act else nn.Identity(),
         )
@@ -92,4 +100,4 @@ class SPDConv(nn.Module):
         return self.conv(self.spd(x))
 
     def extra_repr(self) -> str:  # pragma: no cover
-        return f"c1={self.c1}, c2={self.c2}"
+        return f"c1={self.c1}, c2={self.c2}, stride={self.s}(by SpaceToDepth)"

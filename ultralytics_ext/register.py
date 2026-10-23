@@ -190,8 +190,21 @@ def load_config(config_path: Optional[str] = None) -> ADEAConfig:
 def register_modules() -> Dict[str, str]:
     """让 yaml 解析器认识自定义模块名。
 
-    Ultralytics 的 ``parse_model`` 按字符串名查表，因此只需把自定义类
-    注入到 ``ultralytics.nn.tasks`` 的模块命名空间里即可。
+    Ultralytics 的 ``parse_model`` 按字符串名在 tasks 模块的 globals 里查表，
+    因此需要把自定义类注入 ``ultralytics.nn.tasks``。
+
+    ⚠️ **必须同时注入 ``base_modules``**
+    ------------------------------------
+    ``parse_model`` 对 ``base_modules`` 中的模块按
+    ``[c1, c2_scaled, *args[1:]]`` 传参并正确记账输出通道；
+    对**未知**模块则走 ``else`` 分支 —— 那里
+    ``c2 = ch[f]``（输出通道被强制等于**输入**通道）且 args 原样传入。
+    若不注册进 ``base_modules``：
+    * ``SPDConv`` 拿不到正确的 ``c1``/``c2`` → 维度错乱；
+    * ``DySample`` 的 ``scale`` 会落到 ``kernel_size`` 参数位。
+
+    ``base_modules`` 是 tasks 模块的全局变量，``parse_model`` 内部按全局名查找，
+    因此 ``tasks.base_modules = tasks.base_modules | {...}`` 即可生效。
 
     Returns
     -------
@@ -203,6 +216,7 @@ def register_modules() -> Dict[str, str]:
     from ultralytics_ext.modules.spd_conv import SPDConv
     from ultralytics_ext.modules.dysample import DySample
     from ultralytics_ext.modules.ema_attn import get_ema
+    from ultralytics_ext.modules.ema_blocks import C3k2EMA
 
     registered: Dict[str, str] = {}
 
@@ -210,21 +224,109 @@ def register_modules() -> Dict[str, str]:
     if not hasattr(tasks, "SPDConv"):
         setattr(tasks, "SPDConv", SPDConv)
         registered["SPDConv"] = "ultralytics_ext.modules.spd_conv"
+    else:
+        registered["SPDConv"] = "already present"
 
     # DySample
     if not hasattr(tasks, "DySample"):
         setattr(tasks, "DySample", DySample)
         registered["DySample"] = "ultralytics_ext.modules.dysample"
-
-    # EMA：优先官方实现
-    ema_cls, ema_src = get_ema()
-    if not hasattr(tasks, "EMA"):
-        setattr(tasks, "EMA", ema_cls)
-        registered["EMA"] = ema_src
     else:
-        registered["EMA"] = "ultralytics.official (already present)"
+        registered["DySample"] = "already present"
+
+    # EMA：使用**通道守恒**变体（官方版本会翻倍通道，与 parse_model 的记账冲突）
+    ema_cls, ema_src = get_ema()
+    setattr(tasks, "EMA", ema_cls)
+    registered["EMA"] = ema_src
+
+    # C3k2EMA：带 EMA 的 C3k2 子类（**同层替换**，保住预训练参数名）
+    setattr(tasks, "C3k2EMA", C3k2EMA)
+    registered["C3k2EMA"] = "ultralytics_ext.modules.ema_blocks"
+
+    # ---- 注入 base_modules / repeat_modules，使 parse_model 正确传参与记账 ----
+    # ⚠️ 两组必须**分开**：
+    #    base_modules 里的模块会按 [c1, c2_scaled, *args[1:]] 传参（通道记账）；
+    #    repeat_modules 里的模块会额外执行 args.insert(2, n) —— 把 repeats 数插到第 3 位。
+    #    只有"替换 C3k2"的 C3k2EMA 需要 repeat 语义；
+    #    若把 DySample/EMA/SPDConv 也加进 repeat_modules，它们的第 3 个位置参数
+    #    会被 n 顶掉（例如 DySample 的 scale=2 变成 scale=1）→ 前向形状错乱。
+    registered["base_modules"] = _patch_base_modules(
+        base_extra=[SPDConv, DySample, ema_cls, C3k2EMA],
+        repeat_extra=[C3k2EMA],
+    )
 
     return registered
+
+
+def _patch_base_modules(base_extra, repeat_extra=None) -> str:
+    """把自定义模块注入 ``parse_model`` 的 ``base_modules`` 与 ``repeat_modules``。
+
+    ⚠️ 为什么需要源码级注入
+    ----------------------
+    在 ultralytics 8.4.184 中，``base_modules`` / ``repeat_modules`` 都是
+    ``parse_model`` 的**函数内局部变量**（不是模块全局），无法直接改写。
+
+    而这一注入是**必需**的：``parse_model`` 只对 ``base_modules`` 中的模块按
+    ``[c1, c2_scaled, *args[1:]]`` 传参并正确记账输出通道；对**未知**模块则走
+    ``else`` 分支 —— 那里 ``c2 = ch[f]``（输出通道被强制等于**输入**通道）
+    且 args **原样**传入。若不注入：
+    * ``SPDConv`` 拿不到正确的 ``c1``/``c2`` → 维度错乱；
+    * ``EMA`` 只会收到 1 个参数 → 构造失败；
+    * ``DySample`` 的 ``scale`` 会落到 ``kernel_size`` 参数位；
+    * ``C3k2EMA`` 不会被插入 repeats（``n``）→ 层深改变。
+
+    实现：把两处 ``frozenset(...)`` 替换为 ``_adea_frozenset(...)``，
+    由该函数返回 ``原集合 | 对应的额外模块`` —— 与源码排版无关。
+
+    Returns
+    -------
+    str
+        人类可读的状态说明。
+    """
+    import inspect
+
+    import ultralytics.nn.tasks as tasks
+
+    if getattr(tasks, "_adea_parse_model_patched", False):
+        return "already patched"
+
+    try:
+        src = inspect.getsource(tasks.parse_model)
+    except Exception as exc:  # pragma: no cover
+        return f"FAILED: cannot read parse_model source ({exc})"
+
+    if "base_modules = frozenset(" not in src or "repeat_modules = frozenset(" not in src:
+        return "FAILED: 'base_modules/repeat_modules = frozenset(' marker not found (version changed?)"
+
+    src2 = src.replace("base_modules = frozenset(", "base_modules = _adea_base_frozenset(", 1)
+    src2 = src2.replace("repeat_modules = frozenset(", "repeat_modules = _adea_repeat_frozenset(", 1)
+
+    g = vars(tasks)
+    g["_ADEA_BASE_EXTRA"] = frozenset(base_extra)
+    g["_ADEA_REPEAT_EXTRA"] = frozenset(repeat_extra or [])
+
+    def _adea_base_frozenset(_s):
+        """ADEA 注入点（base_modules）：并入需要 (c1, c2, ...) 传参的模块。"""
+        return frozenset(_s) | g["_ADEA_BASE_EXTRA"]
+
+    def _adea_repeat_frozenset(_s):
+        """ADEA 注入点（repeat_modules）：只并入需要 repeats 语义的模块。"""
+        return frozenset(_s) | g["_ADEA_REPEAT_EXTRA"]
+
+    g["_adea_base_frozenset"] = _adea_base_frozenset
+    g["_adea_repeat_frozenset"] = _adea_repeat_frozenset
+
+    try:
+        exec(compile(src2, "<adea_parse_model>", "exec"), g)  # noqa: S102 - 受控注入
+    except Exception as exc:  # pragma: no cover
+        return f"FAILED: exec failed ({exc})"
+
+    tasks.parse_model = g["parse_model"]
+    tasks._adea_parse_model_patched = True
+    return (
+        f"source-injected: base=[{', '.join(m.__name__ for m in base_extra)}] "
+        f"repeat=[{', '.join(m.__name__ for m in (repeat_extra or []))}]"
+    )
 
 
 # --------------------------------------------------------------------------- #
