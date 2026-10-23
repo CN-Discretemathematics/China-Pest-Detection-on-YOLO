@@ -354,14 +354,25 @@ def _infer_stride_from_points(points) -> float:
 
 
 def patch_assigner(cfg: ADEAConfig) -> Dict[str, str]:
-    """给 ``TaskAlignedAssigner.assign`` 打上 ALA / DLA 补丁。
+    """给标签分配器打上 ALA / DLA 补丁。
 
-    补丁位置在原始分配**之后**：先让 TAL 产出标准的
-    ``(gt_idx, fg_mask, target_gt_idx)``，再按粘连度把被"饿死"实例的
-    anchor 从粘连簇内的支配者手里回收给它。
+    ⚠️ ultralytics 8.4.x 的 API 变化（实测）
+    ----------------------------------------
+    * 8.3.x：``TaskAlignedAssigner.assign(...)`` —— 独占分配用 ``mask_pos.argmax(-2)``；
+    * **8.4.x**：``TaskAlignedAssigner`` 重构为 ``nn.Module``，分配入口是
+      ``forward(...)``，独占分配发生在 ``select_highest_overlaps(...)``
+      （源码注释："Anchors assigned to multiple gt_bboxes keep the highest overlap"）——
+      这正是 M1 描述的"实例被饿死"机制。
+    * 8.4.x 的分配器**已经把 GT×anchor 的 IoU 矩阵**算好（``overlaps``），
+      ALA 直接复用，无需自行构造 anchor 框。
 
-    保持"每个 anchor 至多归属一个 GT"这一不变式 → **无需修改 loss**，
-    可与未打补丁的 ``vflLoss`` 直接配合（§5.2 降级路径）。
+    因此本实现打**两个**补丁：
+    1. ``get_pos_mask`` —— 暂存 ``gt_bboxes``（后续步骤需要它算 GT 间粘连度）；
+    2. ``select_highest_overlaps`` —— 在独占分配**之后**施加 ALA 配额补偿。
+       由于 ``_forward`` 随后会用修改后的 ``target_gt_idx`` 去算 targets 与归一化，
+       下游全部保持自洽。
+
+    保持"每个 anchor 至多归属一个 GT"这一不变式 → **无需修改 loss**。
     """
     report: Dict[str, str] = {}
     if not (cfg.ala_enabled or cfg.dla_enabled):
@@ -374,7 +385,7 @@ def patch_assigner(cfg: ADEAConfig) -> Dict[str, str]:
         report["assigner"] = f"FAILED to import TaskAlignedAssigner: {exc}"
         return report
 
-    from ultralytics_ext.assign.ala import ALAConfig, apply_ala
+    from ultralytics_ext.assign.ala import ALAConfig, apply_ala_assign
     from ultralytics_ext.assign.dla import DLAConfig, per_gt_quota
 
     ala_cfg = ALAConfig(
@@ -392,72 +403,64 @@ def patch_assigner(cfg: ADEAConfig) -> Dict[str, str]:
         report["assigner"] = "already patched"
         return report
 
-    orig_assign = TaskAlignedAssigner.assign
+    # ---- 补丁 1：暂存 gt_bboxes（get_pos_mask 先于 select_highest_overlaps 被调用）----
+    orig_get_pos_mask = TaskAlignedAssigner.get_pos_mask
 
-    def patched_assign(self, *args, **kwargs):
-        result = orig_assign(self, *args, **kwargs)
+    def patched_get_pos_mask(self, pd_scores, pd_bboxes, gt_labels, gt_bboxes, anc_points, mask_gt, **extra):
+        self._adea_gt_bboxes = gt_bboxes
+        self._adea_mask_gt = mask_gt
+        return orig_get_pos_mask(
+            self, pd_scores, pd_bboxes, gt_labels, gt_bboxes, anc_points, mask_gt, **extra
+        )
+
+    # ---- 补丁 2：在独占分配之后施加 ALA 配额补偿 ----
+    orig_select = TaskAlignedAssigner.select_highest_overlaps
+
+    def patched_select(self, mask_pos, overlaps, n_max_boxes, align_metric):
+        target_gt_idx, fg_mask, mask_pos_out = orig_select(
+            self, mask_pos, overlaps, n_max_boxes, align_metric
+        )
         try:
-            gt_idx, fg_mask, target_gt_idx = result[0], result[1], result[2]
-            # 从调用参数里取 gt_bboxes 与 anchor_points
-            gt_bboxes = None
-            anchor_points = None
-            for a in args:
-                if hasattr(a, "shape") and len(a.shape) == 2 and a.shape[-1] == 4:
-                    if gt_bboxes is None:
-                        gt_bboxes = a
-                elif hasattr(a, "shape") and len(a.shape) == 2 and a.shape[-1] == 2:
-                    if anchor_points is None:
-                        anchor_points = a
-            # 位置参数兜底：TaskAlignedAssigner.assign 的签名是
-            # (pred_bboxes, pred_scores, gt_bboxes, gt_scores, anchor_points, mask_gt)
-            if gt_bboxes is None and len(args) >= 3:
-                gt_bboxes = args[2]
-            if anchor_points is None and len(args) >= 5:
-                anchor_points = args[4]
-
-            if gt_bboxes is None or len(gt_bboxes) == 0:
-                return result
-
-            import torch
-
-            if anchor_points is not None:
-                stride = _infer_stride_from_points(anchor_points)
-                n = int(anchor_points.shape[0])
-                anchors_xywh = torch.zeros(
-                    (n, 4), dtype=gt_bboxes.dtype, device=gt_bboxes.device
-                )
-                anchors_xywh[:, 0] = anchor_points[:, 0]
-                anchors_xywh[:, 1] = anchor_points[:, 1]
-                anchors_xywh[:, 2] = stride
-                anchors_xywh[:, 3] = stride
-            else:
-                return result
+            gt_bboxes = getattr(self, "_adea_gt_bboxes", None)
+            if gt_bboxes is None:
+                return target_gt_idx, fg_mask, mask_pos_out
 
             per_gt_qmin = None
             if cfg.dla_enabled:
-                # 密度配额调制：拥挤处的 GT 获得更高配额
-                per_gt_qmin = per_gt_quota(gt_bboxes, cfg.ala_q_min, dla_cfg)
+                # 密度配额调制：拥挤处的 GT 获得更高配额（逐 batch 元素计算）
+                per_gt_qmin = []
+                for b in range(gt_bboxes.shape[0]):
+                    q = per_gt_quota(
+                        gt_bboxes[b].detach().cpu().tolist(), cfg.ala_q_min, dla_cfg
+                    )
+                    per_gt_qmin.append(q)
 
-            new_tgt, stats = apply_ala(
-                target_gt_idx, anchors_xywh, gt_bboxes, ala_cfg, per_gt_qmin=per_gt_qmin
+            new_tgi, _fg, st = apply_ala_assign(
+                target_gt_idx,
+                fg_mask,
+                gt_bboxes,
+                overlaps,
+                getattr(self, "_adea_mask_gt", None),
+                ala_cfg,
+                per_gt_qmin=per_gt_qmin,
             )
-            if stats.n_reassigned > 0 and cfg.verbose:
+            if st.n_reassigned > 0 and cfg.verbose:
                 print(
-                    f"[ADEA] ALA/DLA 生效: clusters={stats.n_clusters} "
-                    f"starved={stats.n_starved_gt} reassigned={stats.n_reassigned}"
+                    f"[ADEA] ALA/DLA 生效: clusters={st.n_clusters} "
+                    f"starved={st.n_starved_gt} reassigned={st.n_reassigned}"
                 )
-            out = list(result)
-            out[2] = new_tgt
-            return tuple(out)
+            return new_tgi, fg_mask, mask_pos_out
         except Exception as exc:  # pragma: no cover - 绝不让补丁搞崩训练
             if cfg.verbose:
                 print(f"[ADEA] WARN 标签分配补丁异常，已回退原始分配: {exc}")
-            return result
+            return target_gt_idx, fg_mask, mask_pos_out
 
-    TaskAlignedAssigner.assign = patched_assign
+    TaskAlignedAssigner.get_pos_mask = patched_get_pos_mask
+    TaskAlignedAssigner.select_highest_overlaps = patched_select
     TaskAlignedAssigner._adea_patched = True
     report["assigner"] = (
-        f"patched TaskAlignedAssigner.assign (ALA={cfg.ala_enabled}, DLA={cfg.dla_enabled}, "
+        f"patched TaskAlignedAssigner.get_pos_mask + select_highest_overlaps "
+        f"(ALA={cfg.ala_enabled}, DLA={cfg.dla_enabled}, "
         f"beta_thr={cfg.ala_beta_thr}, q_min={cfg.ala_q_min})"
     )
     return report

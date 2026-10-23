@@ -29,7 +29,7 @@ EPOCHS="${EPOCHS:-100}"
 IMGSZ="${IMGSZ:-640}"
 BATCH="${BATCH:-48}"
 SEED="${SEED:-0}"
-STRONG="ultralytics_ext/yaml/yolo11n-strong.yaml"
+STRONG="ultralytics_ext/yaml/strong/yolo11n.yaml"
 
 # 读 G0 裁决（若存在）
 G0_VERDICT="UNKNOWN"

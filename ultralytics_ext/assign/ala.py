@@ -57,7 +57,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from typing import Dict, List, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 __all__ = [
     "ALAConfig",
@@ -68,6 +68,7 @@ __all__ = [
     "build_clusters",
     "ala_core",
     "apply_ala",
+    "apply_ala_assign",
 ]
 
 
@@ -230,9 +231,19 @@ class ALAStats:
         }
 
 
-def _gt_positive_counts(target_gt_idx: Sequence[int], n_gt: int) -> List[int]:
+def _gt_positive_counts(target_gt_idx: Sequence[int], n_gt: int, fg_mask: Optional[Sequence[bool]] = None) -> List[int]:
+    """每个 GT 实际分到的正样本数。
+
+    ⚠️ ``fg_mask`` 的必要性（ultralytics 8.4.x）
+    --------------------------------------------
+    8.4.x 的 ``select_highest_overlaps`` 返回的 ``target_gt_idx`` 对**背景 anchor 也填 0**
+    （不是 8.3.x 的 -1）。若不按 ``fg_mask`` 过滤，GT0 的计数会变成"全部 anchor 数"，
+    配额补偿随之失效（实测：ALA 无法救回被饿死的实例）。
+    """
     counts = [0] * n_gt
-    for t in target_gt_idx:
+    for k, t in enumerate(target_gt_idx):
+        if fg_mask is not None and not fg_mask[k]:
+            continue
         if t is not None and t >= 0:
             counts[t] += 1
     return counts
@@ -245,6 +256,8 @@ def ala_core(
     cfg: ALAConfig,
     stats: ALAStats | None = None,
     per_gt_qmin: Sequence[int] | None = None,
+    overlaps: Optional[Sequence[Sequence[float]]] = None,
+    fg_mask: Optional[Sequence[bool]] = None,
 ) -> Tuple[List[int], ALAStats]:
     """粘连感知配额补偿（ALA-2）。
 
@@ -271,11 +284,11 @@ def ala_core(
     """
     new_idx = list(target_gt_idx)
     n_gt = len(gt_boxes)
-    n_anchor = len(anchors)
+    n_anchor = len(anchors) if anchors else (len(overlaps[0]) if overlaps else 0)
     st = stats if stats is not None else ALAStats()
     st.n_gt = n_gt
     st.n_anchors = n_anchor
-    counts_before = _gt_positive_counts(new_idx, n_gt)
+    counts_before = _gt_positive_counts(new_idx, n_gt, fg_mask)
     st.n_positive_before = sum(counts_before)
 
     if per_gt_qmin is None:
@@ -316,11 +329,16 @@ def ala_core(
             if not donors:
                 continue
 
-            cand: List[Tuple[float, int]] = []  # (iou_with_starved, anchor_idx)
-            for ai, a in enumerate(anchors):
+            cand: List[Tuple[float, int]] = []  # (overlap_with_starved, anchor_idx)
+            for ai in range(n_anchor):
+                if fg_mask is not None and not fg_mask[ai]:
+                    continue  # 只动正样本 anchor（背景 anchor 不得被"回收"）
                 if new_idx[ai] not in donors:
                     continue
-                ov = iou(a, gt_boxes[starved])
+                if overlaps is not None:
+                    ov = float(overlaps[starved][ai])
+                else:
+                    ov = iou(anchors[ai], gt_boxes[starved])
                 if ov >= cfg.min_iou:
                     cand.append((ov, ai))
             if not cand:
@@ -415,3 +433,118 @@ def apply_ala(
         )
         new_tensor[idx] = vals
     return new_tensor, st
+
+
+# --------------------------------------------------------------------------- #
+# 适配 ultralytics 8.4.x 的 TaskAlignedAssigner（forward / select_highest_overlaps）
+# --------------------------------------------------------------------------- #
+def apply_ala_assign(
+    target_gt_idx,
+    fg_mask,
+    gt_bboxes,
+    overlaps,
+    mask_gt,
+    cfg: ALAConfig,
+    per_gt_qmin=None,
+    stats=None,
+):
+    """在 **ultralytics 8.4.x 的 assigner 张量约定**下施加 ALA 配额补偿。
+
+    与 8.3.x 的差异
+    --------------
+    8.4.x 的 ``TaskAlignedAssigner`` 重构为 ``nnModule.forward()``，
+    独占分配发生在 ``select_highest_overlaps``（"Anchors assigned to multiple
+    gt_bboxes keep the highest overlap"）—— 这正是 M1 描述的"饿死"机制。
+    分配器内部已经算好 GT×anchor 的 IoU 矩阵 ``overlaps``，
+    本函数直接复用它，无需自行构造 anchor 框。
+
+    Parameters
+    ----------
+    target_gt_idx:
+        (b, num_anchors) 每个 anchor 归属的 GT 下标（-1 为背景）。
+    fg_mask:
+        (b, num_anchors) bool，正样本掩码。
+    gt_bboxes:
+        (b, n_max_boxes, 4) GT 框（xyxy，像素）。
+    overlaps:
+        (b, n_max_boxes, num_anchors) GT×anchor 的 IoU。
+    mask_gt:
+        (b, n_max_boxes, 1) 有效 GT 掩码。
+    cfg:
+        :class:`ALAConfig`。
+    per_gt_qmin:
+        可选逐 GT 配额（供 I2 DLA 传入密度调制后的配额）。
+
+    Returns
+    -------
+    (target_gt_idx_new, fg_mask, stats)
+    """
+    import torch
+
+    if not cfg.enabled or not cfg.enable_quota:
+        return target_gt_idx, fg_mask, (stats if stats is not None else ALAStats())
+
+    device = target_gt_idx.device
+    new_tgi = target_gt_idx.clone()
+    total = ALAStats()
+
+    tgi_cpu = target_gt_idx.detach().cpu()
+    fg_cpu = fg_mask.detach().cpu()
+    gtb_cpu = gt_bboxes.detach().cpu()
+    ovl_cpu = overlaps.detach().cpu()
+    mask_cpu = mask_gt.detach().cpu() if mask_gt is not None else None
+
+    for b in range(tgi_cpu.shape[0]):
+        tgi_b = tgi_cpu[b]
+        fg_b = fg_cpu[b]
+        n_max = gtb_cpu.shape[1]
+
+        if mask_cpu is not None:
+            valid = mask_cpu[b].reshape(-1).bool()
+            n_gt = int(valid.sum())
+        else:
+            n_gt = int(tgi_b.max().item()) + 1 if tgi_b.numel() else 0
+            valid = torch.arange(n_max) < n_gt
+        if n_gt < 2:
+            continue
+
+        gtb = gtb_cpu[b][:n_gt]
+        ovl = ovl_cpu[b][:n_gt]
+
+        idx_list = [int(v) for v in tgi_b.tolist()]
+        ovl_list = [[float(v) for v in row] for row in ovl.tolist()]
+        qmin = None
+        if per_gt_qmin is not None:
+            qmin = [int(per_gt_qmin[i]) if i < len(per_gt_qmin) else cfg.q_min for i in range(n_gt)]
+
+        new_list, st = ala_core(
+            idx_list,
+            [],
+            gtb.tolist(),
+            cfg,
+            None,
+            per_gt_qmin=qmin,
+            overlaps=ovl_list,
+            fg_mask=fg_b.tolist(),
+        )
+
+        # 写回（只改动被回收的 anchor）
+        changed = [i for i, (a, c) in enumerate(zip(idx_list, new_list)) if a != c]
+        if changed:
+            dev_idx = torch.tensor(changed, dtype=torch.long, device=device)
+            dev_vals = torch.tensor(
+                [new_list[i] for i in changed], dtype=new_tgi.dtype, device=device
+            )
+            new_tgi[b, dev_idx] = dev_vals
+
+        total.n_gt += st.n_gt
+        total.n_anchors += st.n_anchors
+        total.n_positive_before += st.n_positive_before
+        total.n_positive_after += st.n_positive_after
+        total.n_clusters += st.n_clusters
+        total.n_starved_gt += st.n_starved_gt
+        total.n_reassigned += st.n_reassigned
+        total.starved_before += st.starved_before
+        total.starved_after += st.starved_after
+
+    return new_tgi, fg_mask, total

@@ -158,13 +158,57 @@ Step 4  返回新的 target_gt_idx
 - 回收：O(|C| · |A|) 的 IoU 计算，簇内 GT 与 anchor 数都小；
 - **总开销 < 1% 训练时间**（相对前向/反向）。
 
-### 2.6 实现位置
+### 2.6 实现位置与 ultralytics 8.4.x 的 API 事实（**实测，务必先读**）
 
-- `ultralytics_ext/assign/ala.py` —— 纯算法层（`ala_core`，无第三方依赖，可单测）
-  + torch 适配层（`apply_ala`）；
-- `ultralytics_ext/register.py::patch_assigner` —— 包裹 `TaskAlignedAssigner.assign`，
-  在原始分配**之后**施加 ALA。anchor 框的 stride 由
-  `_infer_stride_from_points()`（从 anchor 网格中心间距反推）得到 → **不依赖 Ultralytics 内部字段名**，版本鲁棒。
+> ultralytics 8.4.184 的 `TaskAlignedAssigner` 已**重构**，与 8.3.x 差异很大。
+> 若照搬旧版钩子点，ALA 会**静默失效**（补丁挂在不存在的属性上，不报错、不生效）。
+
+| 项 | 8.3.x | **8.4.184（实测）** |
+|---|---|---|
+| 分配入口 | `TaskAlignedAssigner.assign(...)` | `TaskAlignedAssigner.forward(pd_scores, pd_bboxes, anc_points, gt_labels, gt_bboxes, mask_gt, **extra)` |
+| 独占分配发生处 | `target_gt_idx = mask_pos.argmax(-2)` | `select_highest_overlaps(...)`：*"Anchors assigned to multiple gt_bboxes keep the highest overlap"* ← **这正是 M1 的机制** |
+| top-k | 10 | **13**（`TaskAlignedAssigner(topk=13)`，loss 里另用 `tal_topk`） |
+| GT×anchor 重叠度 | 需自行计算 | 分配器**已算好** `overlaps`（IoU 矩阵，形状 (b, n_max_boxes, num_anchors)）→ ALA 直接复用 |
+| 背景 anchor 的 `target_gt_idx` | `-1` | **`0`** ← ⚠️ 见下方陷阱 2 |
+| 通道记账 | — | 未知模块走 `else` 分支（输出通道被强制等于输入、args 原样传入）→ 自定义模块**必须**注入 `base_modules` |
+
+**两个必须知道的陷阱**：
+
+1. **`base_modules` 是 `parse_model` 的函数内局部变量**（8.4.184），`tasks.base_modules = ...` 改不动。
+   本项目用**源码级注入**：把 `base_modules = frozenset(` / `repeat_modules = frozenset(`
+   替换为 `_adea_base_frozenset(` / `_adea_repeat_frozenset(`，在 tasks 命名空间内重新 exec。
+   ⚠️ **base 与 repeat 必须分开注入**：`repeat_modules` 会执行 `args.insert(2, n)`，
+   把第 3 个位置参数顶成 repeats 数 —— 若把 DySample 也加进 repeat，
+   它的 `scale=2` 会变成 `scale=1` → 前向形状错乱。
+
+2. **背景 anchor 的 `target_gt_idx` 是 0 而非 -1**。若按 8.3.x 的直觉直接计数，
+   GT0 的"正样本数"会变成全部 anchor 数，配额补偿随之失效。
+   → ALA 的计数与候选筛选**必须按 `fg_mask` 过滤**，且**只允许回收正样本 anchor**
+   （把背景 anchor "回收"给某个 GT 会凭空制造正样本）。
+
+**ALA 的挂接点（两个补丁）**：
+
+| 补丁 | 作用 |
+|---|---|
+| `get_pos_mask` | 暂存 `gt_bboxes` / `mask_gt`（后续步骤需要 GT 间粘连度） |
+| `select_highest_overlaps` | 在独占分配**之后**施加 ALA 配额补偿 |
+
+由于 `_forward` 随后会用修改后的 `target_gt_idx` 去算 targets 与归一化，
+下游全部保持自洽，**无需修改 loss**。
+
+### 2.7 端到端验证（已通过）
+
+`scripts/selftest_assigner_ala.py` 在**真实** `TaskAlignedAssigner` 上自动搜索能复现
+M1 饥饿的配置（两个粘连小 GT，模型预测覆盖二者的框 → 两者 IoU 几乎相等 →
+argmax 偏向先出现的 GT → 另一个实例正样本归零）：
+
+```
+基线（ADEA_ALA=0）:  GT0 = 10 正样本,  GT1 = 0 正样本   ← 饿死复现
+开启 ALA:            GT0 = 5  正样本,  GT1 = 5 正样本   ← 被救回
+不变量:              总正样本数 10 → 10 不变；供体仍保留 ≥5
+```
+
+该测试是 I1 成立的**直接证据**，也是 T0 诊断包（G0）的预演。
 
 ---
 
@@ -444,9 +488,11 @@ yolo11n-strong = YOLO11n
 | `ultralytics_ext/register.py` | 接线：模块注册 / assigner 补丁 / NMS 替换 / 损失安装 |
 | `ultralytics_ext/diagnostics.py` | D0 训练期只读采集 |
 | `ultralytics_ext/train_adea.py` | 训练入口包装器（接线后交给 Ultralytics entrypoint） |
-| `scripts/make_model_yamls.py` | 从官方 yolo11.yaml 程序化派生 6 套模型配置 |
+| `scripts/make_model_yamls.py` | 从官方 yolo11.yaml 程序化派生 6 套模型配置（含构建 + 前向 + 权重迁移率校验） |
 | `scripts/diagnose_adhesion.py` | D0 分析 + **G0 裁决** |
 | `scripts/synth_adhesion.py` | I4 ASM 合成 |
 | `scripts/density_prior.py` | I2 密度场渲染与统计 |
 | `scripts/scan_thresholds.py` | conf/iou 扫描（定部署点） |
 | `scripts/summarize.py` | runs/ → results.md 台账 |
+| `scripts/selftest_adea.py` | **纯算法自测**（ALA/DLA/AGS/DRA，35 项，不依赖 torch） |
+| `scripts/selftest_assigner_ala.py` | **ALA 端到端自测**（真实 assigner 上复现 M1 饥饿并验证救援） |

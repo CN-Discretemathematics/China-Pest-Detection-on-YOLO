@@ -45,12 +45,34 @@ python scripts/voc2yolo.py --src <下载目录>/VOCdevkit/voc2007 --dst datasets
 # 3) 冒烟测试（10% 子集，3 epoch）
 bash train/30_smoke.sh
 
+# 3.5) 本地自测（不消耗 GPU）
+python scripts/selftest_adea.py          # 纯算法自测：ALA/DLA/AGS/DRA（35 项）
+python scripts/selftest_assigner_ala.py  # ALA 端到端：真实 assigner 上复现 M1 饥饿并验证救援
+
 # 4) 正式实验矩阵
 bash train/40_t1.sh    # T1 基线与工程线
 bash train/50_t2.sh    # T2 复现筛查 + 强基线组装
 bash train/60_t3.sh    # T3 创新模块包
 bash train/70_t4.sh    # T4 定稿与统计
 ```
+
+### 3.1 模型配置的生成方式（**不要手改 yaml**）
+
+6 套模型配置由 `scripts/make_model_yamls.py` **从当前安装的官方 `yolo11.yaml` 程序化派生**，
+以保证与所用 ultralytics 版本完全一致（通道缩放、层索引、Detect 输入列表都对得上）：
+
+```bash
+python scripts/make_model_yamls.py --validate   # 生成 + 构建 + 前向 + 权重迁移率校验
+```
+
+| 变体 | 内容 | 参数量 | 权重迁移率 | 检测尺度 |
+|---|---|---|---|---|
+| `p2/` | R4 P2 检测头 | 2.706M | 82.3% | 4 |
+| `spd/` | R1 SPD-Conv×2 | 2.610M | 99.1% | 3 |
+| `ema/` | R2 EMA×2（通道守恒） | 3.037M | 99.3% | 3 |
+| `dysample/` | R3 DySample | 2.636M | 99.3% | 3 |
+| `spd_ema/` | R1+R2 | 3.053M | 99.1% | 3 |
+| **`strong/`** | **★强基线 R1+R2+R3+R4** | **3.205M** | 82.1% | 4 |
 
 ---
 
