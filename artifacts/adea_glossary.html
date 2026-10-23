@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ADEA · 术语对照表（白话 ↔ 术语）</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=Outfit:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#f7f5f0; --card:#fff; --line:#e9e3d6; --line-soft:#f0ece2;
+    --ink:#14171e; --ink2:#3a4256; --muted:#7c7a72;
+    --primary:#2f6f5e; --primary-soft:rgba(47,111,94,.09);
+    --warm:#c97b3f; --warm-soft:rgba(201,123,63,.10);
+    --rose:#b06367; --rose-soft:rgba(176,99,103,.10);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--ink);font-family:'Outfit',sans-serif;font-size:14.5px;line-height:1.6;
+       -webkit-font-smoothing:antialiased;
+       background-image:radial-gradient(circle at 10% 2%,rgba(47,111,94,.05),transparent 40%),
+                        radial-gradient(circle at 90% 0%,rgba(201,123,63,.05),transparent 36%);
+       background-repeat:no-repeat}
+  .wrap{max-width:1020px;margin:0 auto;padding:42px 24px 70px}
+  h1{font-family:'DM Serif Display',serif;font-weight:400;font-size:33px;line-height:1.24;letter-spacing:-.01em}
+  h2{font-family:'DM Serif Display',serif;font-weight:400;font-size:22px;letter-spacing:-.004em}
+  h3{font-size:15px;font-weight:600}
+  .sec{margin-top:42px}
+  .eyebrow{font-family:'JetBrains Mono',monospace;font-size:11.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--primary);margin-bottom:9px}
+  .sub{color:var(--ink2);max-width:74ch;margin-top:8px;font-size:14px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px 20px;box-shadow:0 2px 8px rgba(0,0,0,.04)}
+  table{width:100%;border-collapse:collapse;font-size:13.5px}
+  th{text-align:left;font-weight:600;color:var(--muted);font-size:11.5px;letter-spacing:.05em;text-transform:uppercase;
+     padding:8px 10px;border-bottom:1px solid var(--line)}
+  td{padding:8px 10px;border-bottom:1px solid var(--line-soft);vertical-align:top;line-height:1.5}
+  tr:last-child td{border-bottom:none}
+  .plain{color:var(--ink);font-weight:500;width:27%}
+  .term{font-family:'JetBrains Mono',monospace;font-size:12.5px;color:var(--primary);width:26%;word-break:break-word}
+  .term em{font-style:normal;color:var(--muted)}
+  .here{color:var(--ink2);width:47%}
+  .tag{display:inline-block;font-family:'JetBrains Mono',monospace;font-size:10px;padding:1px 6px;border-radius:10px;
+       background:var(--primary-soft);color:var(--primary);margin-left:6px;vertical-align:1px}
+  .tag.o{background:var(--warm-soft);color:var(--warm)}
+  .tag.r{background:var(--rose-soft);color:var(--rose)}
+  .pipeline{display:flex;gap:0;align-items:stretch;flex-wrap:wrap;margin-top:6px}
+  .pbox{flex:1;min-width:120px;border:1px solid var(--line);background:#fff;border-radius:12px;padding:10px 12px}
+  .pbox .pt{font-weight:600;font-size:13px}
+  .pbox .pd{font-size:11.5px;color:var(--muted);margin-top:2px;line-height:1.4}
+  .pbox.hot{background:var(--primary-soft);border-color:rgba(47,111,94,.4)}
+  .pbox.hot .pt{color:var(--primary)}
+  .parrow{display:flex;align-items:center;padding:0 6px;color:var(--muted)}
+  .mis{border-left:2px solid var(--rose);background:var(--rose-soft);padding:11px 15px;border-radius:0 12px 12px 0;
+       margin-bottom:10px;font-size:13.5px;color:var(--ink2)}
+  .mis b{color:var(--ink)}
+  .ok{border-left:2px solid var(--primary);background:var(--primary-soft);padding:12px 16px;border-radius:0 12px 12px 0;
+      font-size:13.5px;color:var(--ink2)}
+  .mono{font-family:'JetBrains Mono',monospace}
+  .cols{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}
+  @media(max-width:820px){
+    .wrap{padding:30px 16px 50px} h1{font-size:26px}
+    .cols{grid-template-columns:1fr}
+    td{font-size:13px}
+    .plain,.term,.here{width:auto}
+    .term{border-left:2px solid var(--primary-soft);padding-left:8px}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="eyebrow">ADEA · 阅读辅助</div>
+    <h1>术语对照表：白话 ↔ 术语</h1>
+    <p class="sub">
+      这份表按"<strong>白话</strong> → <strong>术语</strong> → <strong>在本项目里具体指什么</strong>"三栏写。
+      凡是带 <span class="tag">本项目</span> 标记的，是我们在既有工作之外自己加的东西；
+      带 <span class="tag o">复现</span> 的是别人论文里的模块，我们只是装进来验证，不主张创新。
+    </p>
+  </header>
+
+  <section class="sec">
+    <div class="eyebrow">先看这一张</div>
+    <h2>整件事是怎么跑的</h2>
+    <div class="card" style="margin-top:14px">
+      <div class="pipeline">
+        <div class="pbox"><div class="pt">① 图像</div><div class="pd">800×600 的粘板照</div></div>
+        <div class="parrow">→</div>
+        <div class="pbox"><div class="pt">② 特征图</div><div class="pd">缩到 1/8、1/16、1/32 的三张"网格纸"</div></div>
+        <div class="parrow">→</div>
+        <div class="pbox hot"><div class="pt">③ 标签分配</div><div class="pd">决定每个网格点学哪只虫<br><span class="tag">SLA / M0·S1·S2 在这</span></div></div>
+        <div class="parrow">→</div>
+        <div class="pbox hot"><div class="pt">④ 算损失</div><div class="pd">每道题算分，汇总成总分<br><span class="tag">SFW 在这</span></div></div>
+        <div class="parrow">→</div>
+        <div class="pbox"><div class="pt">⑤ 预测框</div><div class="pd">每个网格点吐出类别+框</div></div>
+        <div class="parrow">→</div>
+        <div class="pbox hot"><div class="pt">⑥ 去重</div><div class="pd">重复框只留最好的<br><span class="tag o">AGS 在这</span></div></div>
+        <div class="parrow">→</div>
+        <div class="pbox"><div class="pt">⑦ 打分</div><div class="pd">mAP50 / mAP50-95</div></div>
+      </div>
+      <p class="muted" style="font-size:12.5px;margin-top:14px">
+        我们这个项目的创新集中在 <strong>③ 标签分配</strong> 与 <strong>④ 损失的权重</strong> 两处；② 是复现别人的模块；
+        ⑥ 是工程组件。也就是说：**模型长什么样不是我们的创新，怎么"分配作业"和"怎么算分"才是。**
+      </p>
+    </div>
+  </section>
+
+  <section class="sec">
+    <div class="eyebrow">01 · 基础名词</div>
+    <h2>跑起来要认识这些</h2>
+    <div class="card" style="margin-top:12px">
+      <table>
+        <tr><th class="plain">白话</th><th class="term">术语</th><th class="here">在本项目里具体指什么</th></tr>
+        <tr><td>标注</td><td class="term">label / annotation</td><td class="here">人工框出的"虫在哪儿、是什么虫"。项目里已转成 YOLO 格式的 txt，一行一个框</td></tr>
+        <tr><td>把数据分成几份</td><td class="term">split</td><td class="here">train 12,701 / val 5,077 / test 7,600 张，比例与原论文 5:2:3 一致；<strong>评测固定用 test</strong></td></tr>
+        <tr><td>每轮训练看完一遍数据</td><td class="term">epoch</td><td class="here">正式实验 100 epoch；本机冒烟用 1 epoch</td></tr>
+        <tr><td>一次送进模型的图</td><td class="term">batch</td><td class="here">正式实验 batch=48（4090）；本机 1660S 用 4</td></tr>
+        <tr><td>喂进模型的图边长</td><td class="term">imgsz</td><td class="here">640（letterbox 缩放，保持比例）</td></tr>
+        <tr><td>随机种子</td><td class="term">seed</td><td class="here">固定 0，让"同条件对比"真的同条件</td></tr>
+        <tr><td>早停耐心</td><td class="term">patience</td><td class="here">30 个 epoch 没进步就停</td></tr>
+        <tr><td>模型大小</td><td class="term">params / FLOPs</td><td class="here">参数量（百万）、计算量；yolo11n 是 2.60M，我们的强基线是 3.21M</td></tr>
+      </table>
+    </div>
+  </section>
+
+  <section class="sec">
+    <div class="eyebrow">02 · 模型结构</div>
+    <h2>模型长什么样</h2>
+    <div class="card" style="margin-top:12px">
+      <table>
+        <tr><th class="plain">白话</th><th class="term">术语</th><th class="here">在本项目里具体指什么</th></tr>
+        <tr><td>把图缩小几倍后画出的一张"网格纸"</td><td class="term">feature map / stride</td><td class="here">stride=8 的网格纸，每个格子代表原图 8×8 像素。YOLO11n 有 8/16/32 三层；加了 P2 就是 4/8/16/32 四层</td></tr>
+        <tr><td>网格纸上的一个点</td><td class="term">anchor</td><td class="here">一个候选点。它自己不是框，只是个"位置"，会学着吐出框</td></tr>
+        <tr><td>这个点能不能负责这只虫</td><td class="term">in-box / mask_in_gts</td><td class="here">网格点落在虫的框内 → 有资格负责；落在框外 → 不负责</td></tr>
+        <tr><td>虫的框太小，框里装不下几个网格点</td><td class="term">stride_val 下限规则</td><td class="here">ultralytics 自带：边长小于 16px 的框会被"抬"到 16px，保证框里至少有点。<strong>这是 YOLOv7 式扩张的退化版</strong></td></tr>
+        <tr><td>多加一层最细的网格纸</td><td class="term">P2 检测头</td><td class="here">stride=4 层，专治超小目标。<span class="tag o">复现</span> YOLO11-4K (arXiv:2512.16493)</td></tr>
+        <tr><td>换一种下采样，避免丢小目标信息</td><td class="term">SPD-Conv</td><td class="here"><span class="tag o">复现</span> arXiv:2202.01248</td></tr>
+        <tr><td>更好的注意力</td><td class="term">EMA 注意力</td><td class="here"><span class="tag o">复现</span> arXiv:2303.11366（EP-YOLO 论文里横向对比最优）</td></tr>
+        <tr><td>更好的上采样</td><td class="term">DySample</td><td class="here"><span class="tag o">复现</span> arXiv:2308.07096</td></tr>
+        <tr><td>骨干 / 脖子 / 头</td><td class="term">backbone / neck / head</td><td class="here">backbone 提特征，neck 融合多层，head 出检测框。我们改的是 neck/head 的模块，不动 backbone 结构</td></tr>
+      </table>
+    </div>
+  </section>
+
+  <section class="sec">
+    <div class="eyebrow">03 · 标签分配（我们改的核心）</div>
+    <h2>这一节是重点</h2>
+    <div class="card" style="margin-top:12px">
+      <table>
+        <tr><th class="plain">白话</th><th class="term">术语</th><th class="here">在本项目里具体指什么</th></tr>
+        <tr><td>给虫分派"练习题"</td><td class="term">label assignment</td><td class="here">决定每个网格点负责学哪只虫。<strong>本项目创新所在层</strong></td></tr>
+        <tr><td>被派到的练习题</td><td class="term">positive / 正样本</td><td class="here">这个网格点负责这只虫，就要算它的错</td></tr>
+        <tr><td>没被派到的</td><td class="term">negative / 背景</td><td class="here">要学"这里什么都没有"，防止乱报</td></tr>
+        <tr><td>每只虫最多几道题</td><td class="term">topk</td><td class="here">ultralytics 默认给 10（实测每只虫最多 10 个正样本）。<strong>数字越小，题越少</strong></td></tr>
+        <tr><td>这道题有多"划算"</td><td class="term">align_metric</td><td class="here">= 分类置信度<sup>0.5</sup> × CIoU<sup>6</sup>。越大说明"这个点既能认对类别、又框得准"</td></tr>
+        <tr><td>两个框重叠多少</td><td class="term">IoU / CIoU</td><td class="here">交 ÷ 并（CIoU 还看中心距离和长宽比）</td></tr>
+        <tr><td>虫的框里能装下几个网格点</td><td class="term">候选池 candidate pool</td><td class="here">本项目新引入的度量。实测：最小档只有 <strong>0.41 个</strong>，最大档 88 个，差 200 倍</td></tr>
+        <tr><td>这只虫最多能拿到几道题（几何上限）</td><td class="term">min(topk, 候选池)</td><td class="here">纯几何量，与分辨率、模型结构无关 → 加了 P2 会自动变大</td></tr>
+        <tr><td>两个虫抢同一个网格点</td><td class="term">冲突 / contention</td><td class="here">ultralytics 的规则：<strong>只留给 IoU 最高的那个</strong>，另一个直接失去。实测这种情况只占 <strong>0.24%</strong></td></tr>
+        <tr><td>给定大小，这只虫"本该"拿几道题</td><td class="term">期望份额 E[n_pos|a]</td><td class="here">按相对面积分档统计出来的平均值（6 档：2.27 / 4.07 / 6.31 / 9.84 / 9.99 / 10.0）</td></tr>
+        <tr><td>实际比期望少了多少</td><td class="term">残差 residual</td><td class="here">粘连目标残差 <strong>−0.761</strong>（被剥夺），孤立目标 0.000（正常）</td></tr>
+        <tr><td>题不够时把练习区域放大</td><td class="term">候选区扩展 / allowed area</td><td class="here"><strong>M0</strong>。前人是 YOLOv7：给所有虫固定扩 5×5 网格；我们只给"题不够的"补，扩多少按 stride 算 <span class="tag">本项目</span></td></tr>
+        <tr><td>抢到的题要还回去一些</td><td class="term">公平再分配 / 零和转移</td><td class="here"><strong>S2</strong>。总数不变，只是重新分；护栏 ρ=0.5 保证"至少一半匹配度"才肯让 <span class="tag">本项目</span></td></tr>
+        <tr><td>从最饿的那个开始补</td><td class="term">max-min 公平 / min_gap</td><td class="here">优先补缺口最大的；转移后总缺口不变、<strong>最大缺口下降</strong>（实测 5.00 → 3.00）</td></tr>
+        <tr><td>高密度区域的配额调整</td><td class="term">DLA</td><td class="here">按密度场调制每个 GT 的最低题数 <span class="tag o">次要组件</span></td></tr>
+        <tr><td>按难度重新采样</td><td class="term">DRA</td><td class="here">动态采样器，专治稀有类 <span class="tag o">次要组件</span></td></tr>
+      </table>
+    </div>
+  </section>
+
+  <section class="sec">
+    <div class="eyebrow">04 · 损失与评测</div>
+    <h2>怎么算分、怎么打分</h2>
+    <div class="cols" style="margin-top:12px">
+      <div class="card">
+        <table>
+          <tr><th class="plain">白话</th><th class="term">术语</th></tr>
+          <tr><td>分类题错了的罚分</td><td class="term">BCE / 分类损失</td></tr>
+          <tr><td>框歪了、偏了、小了</td><td class="term">回归损失 / DFL</td></tr>
+          <tr><td>每道题的罚分轻重</td><td class="term">weight</td></tr>
+          <tr><td>这道题算不算重要</td><td class="term">target score</td></tr>
+          <tr><td>报出来的框有多少是真的</td><td class="term">Precision</td></tr>
+          <tr><td>该找到的找到了多少</td><td class="term">Recall</td></tr>
+          <tr><td>重叠 50% 就算命中</td><td class="term">mAP50</td></tr>
+          <tr><td>从 50% 到 95% 十档严格标准平均</td><td class="term">mAP50-95</td></tr>
+          <tr><td>每只虫算平均精度再平均</td><td class="term">AP / mAP</td></tr>
+        </table>
+      </div>
+      <div class="card">
+        <table>
+          <tr><th class="plain">白话</th><th class="term">术语</th></tr>
+          <tr><td>重复框只留最好的那个</td><td class="term">NMS</td></tr>
+          <tr><td>粘连的两只虫被误删</td><td class="term">误抑制 false suppression</td></tr>
+          <tr><td>分级抑制</td><td class="term">AGS</td></tr>
+          <tr><td>造一批"粘连样本"</td><td class="term">ASM 合成</td></tr>
+          <tr><td>把模型的取舍一个个拆开看</td><td class="term">消融 ablation</td></tr>
+          <tr><td>自己搭的强对照</td><td class="term">强基线 strong baseline</td></tr>
+          <tr><td>把别人论文的模块装进来</td><td class="term">复现 reproduction</td></tr>
+          <tr><td>只挑某类图来评测</td><td class="term">定向子集 subset</td></tr>
+          <tr><td>先证明假设不成立再决定要不要投入</td><td class="term">kill gate / 裁决 verdict</td></tr>
+        </table>
+      </div>
+    </div>
+    <div class="ok" style="margin-top:14px">
+      <strong>SFW 用一句话说清：</strong>以前每道题权重一样，于是领 10 道题的大虫子在"总分"里的话语权
+      是领 1.8 道题的小虫子的 <strong>5.5 倍</strong>。SFW 改成"每只虫子的总贡献一样大"，
+      背景题权重不变、总权重守恒 → <strong>损失量级不变</strong>，只是更公平。
+      前人 Balanced L1 Loss 处理的是<strong>回归项</strong>，我们处理的是<strong>分类项里"领几道题"这条通道</strong>。
+    </div>
+  </section>
+
+  <section class="sec">
+    <div class="eyebrow">05 · 常见误解</div>
+    <h2>四个容易被误解的点</h2>
+    <div style="margin-top:12px">
+      <div class="mis"><b>❌ "SLA 是全新发明的方法。"</b><br>
+        更准确：名字与整体组装是本项目提的，但每个零件都有前人出处（YOLOv7 的 allowed area、ATSS/PAA 这一族、
+        Balanced L1 Loss）。<strong>增量在"诊断 + 份额的参数化"，不在原语。</strong>所以必须有
+        <span class="mono">strong_SLA_fixed</span> 这个 YOLOv7 式对照组。</div>
+      <div class="mis"><b>❌ "正样本越多越好。"</b><br>
+        不是。每个 GT 的正样本数被 <span class="mono">topk=10</span> 封顶；扩容只是让"几何上拿不到"的那些补上来，
+        大目标不受影响。<strong>本项目实测：微目标 1.80 → 2.96，大目标 9.87 → 9.94（几乎不变）</strong>。</div>
+      <div class="mis"><b>❌ "粘连一定是坏事，越少越好。"</b><br>
+        粘连子集的 mAP 确实更低（原论文：低 4.96 个点），但原因主要是<strong>特征与后处理</strong>，
+        不是分配层（实测"被邻居抢走"只占 0.24%）。所以粘连方向我们降级为 AGS 后处理 + ASM 合成，
+        创新主线转向尺度公平。</div>
+      <div class="mis"><b>❌ "补丁打上了就等于生效了。"</b><br>
+        这是这类工作最大的坑：训练照常跑、loss 正常下降，但补丁其实没起作用。
+        我们为此做了 <span class="mono">assigner_health()</span> 运行时自检（报错数 / 转移数 / 缺口），
+        <strong>异常即判该次实验不可信</strong>。</div>
+    </div>
+  </section>
+
+  <footer style="margin-top:40px;padding-top:14px;border-top:1px solid var(--line);color:var(--muted);font-size:12.5px">
+    配套：<span class="mono">docs/方法设计_ADEA.md</span>（方法全文与 §2.11 前人划界表 + 20 条已核验 DOI）·
+    <span class="mono">artifacts/adea_sla_report.html</span>（本机实测结果可视化）· commit 3bf2f7f
+  </footer>
+</div>
+</body>
+</html>
