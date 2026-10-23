@@ -380,6 +380,9 @@ def main() -> None:
         paste_solid(canvas, patch2, (px2, py2))
         placed.append((cls, (px1, py1, px1 + w1, py1 + h1)))
         boxes_px.append((px1, py1, px1 + w1, py1 + h1))
+        # ⚠️ 第二个实例的框也必须记录 —— 否则 achieved_beta 永远算不出来
+        #    （曾经只记了第一个，导致统计显示"合成样本零粘连"，而实际是重叠的）
+        boxes_px.append((px2, py2, px2 + w2, py2 + h2))
 
         # ---- 高密度场景：补齐到 >20 实例（论文口径）----
         if want_dense:
