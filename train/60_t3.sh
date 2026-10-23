@@ -81,6 +81,8 @@ else
   run strong_SLA       "ADEA_SLA=1"                                    "${STRONG}"
   run strong_SLA_M0    "ADEA_SLA=1 ADEA_SLA_S2=0"                       "${STRONG}"
   run strong_SLA_noexp "ADEA_SLA=1 ADEA_SLA_EXPAND=0"                  "${STRONG}"
+  # ---- 与最接近前人工作的对照：YOLOv7 式"固定网格邻域"(allowed area) ----
+  run strong_SLA_fixed "ADEA_SLA=1 ADEA_SLA_EXPAND_MODE=fixed"         "${STRONG}"
   # ---- I1b SFW（尺度公平监督权重，损失层）----
   run strong_SFW       "ADEA_SFW=1"                                    "${STRONG}"
   run strong_SLA_SFW   "ADEA_SLA=1 ADEA_SFW=1"                         "${STRONG}"

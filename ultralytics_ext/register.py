@@ -38,6 +38,8 @@ Ultralytics 的 CLI 会对未知键报错（``yolo detect train model=... ADEA_A
 ``ADEA_SLA_EXPAND``            监督密度补偿（候选区扩展）开关，默认 1
 ``ADEA_SLA_QMIN``              每 GT 的正样本配额下限，默认 0（= 对齐 topk）
 ``ADEA_SLA_EXPAND_MARGIN``     候选区扩张边距（单位 stride_val），默认 1.0
+``ADEA_SLA_EXPAND_MODE``       quota（默认，本文）/ fixed（YOLOv7 式固定邻域对照组）
+``ADEA_SLA_FIXED_MARGIN``      fixed 模式每边扩张的网格数，默认 2.0
 ``ADEA_ALA``                   ALA 开关（0/1），默认 0（降级为消融项）
 ``ADEA_ALA_BETA_THR``          粘连阈值 β，默认 0.05（论文口径）
 ``ADEA_ALA_Q_MIN``             每个 GT 的最小正样本数，默认 3
@@ -89,6 +91,8 @@ class ADEAConfig:
     sla_expand: bool = True
     sla_q_min: int = 0
     sla_expand_margin: float = 1.0
+    sla_expand_mode: str = "quota"
+    sla_fixed_margin_cells: float = 2.0
 
     # I1 ALA（已降级为消融项）
     ala_enabled: bool = False
@@ -193,6 +197,8 @@ def load_config(config_path: Optional[str] = None) -> ADEAConfig:
     cfg.sla_expand = _env_bool("ADEA_SLA_EXPAND", cfg.sla_expand)
     cfg.sla_q_min = _env_int("ADEA_SLA_QMIN", cfg.sla_q_min)
     cfg.sla_expand_margin = _env_float("ADEA_SLA_EXPAND_MARGIN", cfg.sla_expand_margin)
+    cfg.sla_expand_mode = os.environ.get("ADEA_SLA_EXPAND_MODE", cfg.sla_expand_mode).strip() or cfg.sla_expand_mode
+    cfg.sla_fixed_margin_cells = _env_float("ADEA_SLA_FIXED_MARGIN", cfg.sla_fixed_margin_cells)
 
     cfg.ala_enabled = _env_bool("ADEA_ALA", cfg.ala_enabled)
     cfg.ala_beta_thr = _env_float("ADEA_ALA_BETA_THR", cfg.ala_beta_thr)
@@ -673,6 +679,8 @@ def patch_sla(cfg: ADEAConfig) -> Dict[str, str]:
         expand_enabled=cfg.sla_expand,
         q_min=cfg.sla_q_min,
         expand_margin=cfg.sla_expand_margin,
+        expand_mode=cfg.sla_expand_mode,
+        fixed_margin_cells=cfg.sla_fixed_margin_cells,
     )
 
     if getattr(TaskAlignedAssigner, "_adea_sla_patched", False):
@@ -716,12 +724,17 @@ def patch_sla(cfg: ADEAConfig) -> Dict[str, str]:
         try:
             pool = mask.sum(-1)
             valid = mask_gt.reshape(mask_gt.shape[0], -1).bool()
-            quota = int(getattr(self, "topk", 10)) if sla_cfg.q_min <= 0 else int(sla_cfg.q_min)
-            need = (pool < quota) & valid
+            stride_val = float(getattr(self, "stride_val", 16) or 16)
+            if sla_cfg.expand_mode == "fixed":
+                # 对照实现：YOLOv7 式"固定网格邻域"（allowed area），对所有目标一视同仁
+                need = valid
+                margin = sla_cfg.fixed_margin_cells * stride_val
+            else:
+                quota = int(getattr(self, "topk", 10)) if sla_cfg.q_min <= 0 else int(sla_cfg.q_min)
+                need = (pool < quota) & valid
+                margin = sla_cfg.expand_margin * stride_val
             if not bool(need.any()):
                 return mask
-            stride_val = float(getattr(self, "stride_val", 16) or 16)
-            margin = sla_cfg.expand_margin * stride_val
             gt2 = sla_expand_boxes(gt_bboxes, need, margin)
             mask2 = orig_select_cand(self, xy_centers, gt2, mask_gt, eps)
             state["n_expanded"] += int(need.sum())
@@ -785,7 +798,8 @@ def patch_sla(cfg: ADEAConfig) -> Dict[str, str]:
             f"(criterion={cfg.sla_criterion}, claim_only={cfg.sla_claim_only}, "
             f"S2={cfg.sla_s2}, rho={cfg.sla_match_ratio}, tol={cfg.sla_tol}, "
             f"min_gap={cfg.sla_min_gap}, rounds={cfg.sla_rounds}, "
-            f"expand={cfg.sla_expand}, q_min={cfg.sla_q_min}, margin={cfg.sla_expand_margin})"
+            f"expand={cfg.sla_expand}, mode={cfg.sla_expand_mode}, "
+            f"q_min={cfg.sla_q_min}, margin={cfg.sla_expand_margin})"
         )
     }
 

@@ -134,6 +134,13 @@ class SLAConfig:
         实测：候选池不足的 GT 占相当比例，这是微目标监督不足的根源。
     expand_margin:
         候选区的扩张边距，单位是 **stride_val**（网格单位 → 与分辨率无关）。
+    expand_mode:
+        ``"quota"``（默认，本文）：**只对候选池不足配额的目标**扩张；
+        ``"fixed"``：**对所有目标**按固定网格邻域扩张 —— 这是
+        **YOLOv7 "allowed area"（粗粒度 5×5 邻域 / 细粒度 3×3 中心网格）**
+        思路的对照实现，用于论文中"我们的配额驱动 vs 前人固定网格"的消融。
+    fixed_margin_cells:
+        ``fixed`` 模式每边扩张的网格数（默认 2 → 区域放大到 ≈5×5，贴近 YOLOv7 粗粒度）。
         ultralytics 会把尺寸小于 ``stride_val`` 的边抬到 ``stride_val``，
         因此乘性扩张对极小框无效，必须用边距。
     match_ratio:
@@ -171,7 +178,9 @@ class SLAConfig:
     # 监督密度补偿（候选区扩展）
     expand_enabled: bool = True
     q_min: int = 0            # 0 = 与 assigner 的 topk 对齐（无自由参数）
-    expand_margin: float = 1.0  # 以 stride_val 为单位的扩张边距
+    expand_margin: float = 1.0  # 以 stride_val 为单位的扩张边距（quota 模式）
+    expand_mode: str = "quota"   # quota = 配额驱动（本文）/ fixed = 固定邻域（YOLOv7 式对照）
+    fixed_margin_cells: float = 2.0  # fixed 模式：每边扩张的网格数（2 → 近似 YOLOv7 粗粒度 5×5）
 
     # 经验期望表（报告用；不参与分配决策）
     expect_table: List[Tuple[float, float, float]] = field(
