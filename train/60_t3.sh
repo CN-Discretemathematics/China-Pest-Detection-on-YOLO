@@ -70,6 +70,13 @@ run () {
     model="${RUNS}/${name}/weights/best.pt" data="${DATA}" split="${EVAL_SPLIT}" \
     project="${RUNS}" name="${name}_val" \
     2>&1 | tee "${LOGS}/60_t3_eval_${name}.log" | tail -6
+  # 定向子集评测（验收标准 B2「定向性」的唯一依据）
+  python scripts/eval_subsets.py \
+    --model "${RUNS}/${name}/weights/best.pt" --data "${DATA}" --split "${EVAL_SPLIT}" \
+    --stats-root "${ROOT}/datasets/pest24/labels" \
+    --out "${ROOT}/artifacts/eval" --run-name "${name}" \
+    --imgsz "${IMGSZ}" --batch "${BATCH}" --device 0 --workers 8 --seed "${SEED}" \
+    2>&1 | tee "${LOGS}/60_t3_subsets_${name}.log" | grep -E "^\[eval\]" || true
 }
 
 if [ "${G0_VERDICT}" = "FAIL" ] || [ "${G0_VERDICT}" = "PENDING" ]; then

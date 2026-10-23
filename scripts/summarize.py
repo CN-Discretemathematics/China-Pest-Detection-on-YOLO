@@ -116,14 +116,21 @@ def merge_eval_json(items: List[Dict[str, object]], eval_dir: Optional[Path]) ->
                       "has_best": data.get("has_best")}
             items.append(target)
             by_run[run] = target
-        for key, jkey in (
-            ("precision", "precision"),
-            ("recall", "recall"),
-            ("map50", "mAP50"),
-            ("map50_95", "mAP50-95"),
+        for key, jkeys in (
+            ("precision", ("precision",)),
+            ("recall", ("recall",)),
+            ("map50", ("mAP50", "map50")),
+            ("map50_95", ("mAP50-95", "map50_95")),
+            # 定向子集（验收标准 B2「定向性」的依据，由 scripts/eval_subsets.py 产出）
+            ("subset_adhesion", ("subset_adhesion",)),
+            ("subset_dense", ("subset_dense",)),
+            ("subset_rare", ("subset_rare",)),
+            ("subset_tiny", ("subset_tiny",)),
         ):
-            if data.get(jkey) is not None:
-                target[key] = float(data[jkey])
+            for jk in jkeys:
+                if data.get(jk) is not None:
+                    target[key] = float(data[jk])
+                    break
 
 
 def render(items: List[Dict[str, object]], out_path: Path, eval_split: str = "val") -> str:
