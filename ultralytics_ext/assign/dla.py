@@ -51,6 +51,7 @@ __all__ = [
     "sample_density",
     "per_gt_density",
     "per_gt_quota",
+    "xyxy_to_xywh_list",
     "apply_dla_quota",
 ]
 
@@ -180,6 +181,20 @@ def per_gt_density(density, gt_boxes_xywh) -> List[float]:
     for b in gt_boxes_xywh:
         cx, cy = float(b[0]), float(b[1])
         out.append(sample_density(density, cx, cy))
+    return out
+
+
+def xyxy_to_xywh_list(boxes) -> List[List[float]]:
+    """xyxy → xywh（中心 cx, cy + 宽高）。
+
+    ⚠️ 必要性：``per_gt_quota`` 内部按 **xywh** 解释输入（中心在 b[0], b[1]），
+    而 assigner 给的 ``gt_bboxes`` 是 **xyxy**。不转换的话，密度会被采样在
+    框的**左上角**而非中心 → 密度调制完全错位。
+    """
+    out: List[List[float]] = []
+    for b in boxes:
+        x1, y1, x2, y2 = (float(v) for v in b)
+        out.append([(x1 + x2) / 2.0, (y1 + y2) / 2.0, max(0.0, x2 - x1), max(0.0, y2 - y1)])
     return out
 
 

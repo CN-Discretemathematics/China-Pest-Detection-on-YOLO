@@ -294,11 +294,12 @@ def ala_core(
     if per_gt_qmin is None:
         qmin_list = [cfg.q_min] * n_gt
     else:
-        if len(per_gt_qmin) != n_gt:
-            raise ValueError(
-                f"per_gt_qmin length {len(per_gt_qmin)} != n_gt {n_gt}"
-            )
-        qmin_list = [max(0, int(q)) for q in per_gt_qmin]
+        # 容忍长度不一致：截断或补齐（**不抛异常**）——
+        # 上游可能按"填充后的 GT 数"给出配额，而这里的 n_gt 是"有效 GT 数"。
+        q = list(per_gt_qmin)[:n_gt]
+        if len(q) < n_gt:
+            q = q + [cfg.q_min] * (n_gt - len(q))
+        qmin_list = [max(0, int(v)) for v in q]
 
     if not cfg.enabled or not cfg.enable_quota or n_gt < 2 or n_anchor == 0:
         st.n_positive_after = st.n_positive_before
@@ -517,10 +518,15 @@ def apply_ala_assign(
         ovl_list = [[float(v) for v in row] for row in ovl.tolist()]
 
         # 逐 batch 取出该 batch 的逐 GT 配额
+        # ⚠️ 长度必须与**有效** GT 数 n_gt 对齐：
+        #    per_gt_qmin 是按**填充后**的 n_max_boxes 算的（ultralytics 会把每张图的
+        #    GT 补齐到同一上限），而 n_gt 来自 mask_gt（真实有效数）→ 必须切片。
         qmin = None
-        if per_gt_qmin is not None:
-            if b < len(per_gt_qmin):
-                qmin = [int(q) for q in per_gt_qmin[b]]
+        if per_gt_qmin is not None and b < len(per_gt_qmin):
+            q = [int(x) for x in per_gt_qmin[b][:n_gt]]
+            if len(q) < n_gt:  # 补齐
+                q += [cfg.q_min] * (n_gt - len(q))
+            qmin = q
 
         new_list, st = ala_core(
             idx_list,

@@ -7,19 +7,22 @@
     高粘连 (β 大) 且小尺寸的目标，其被分配到的正样本 anchor 数 ``n_pos``
     会系统性地偏少（被同簇的"支配者"目标挤占）。
 
-本模块在 ``TaskAlignedAssigner.assign`` 上再打一层**只读记录**的补丁，
-把每个 batch 的 (GT 粘连度, GT 正样本数, GT 面积) 落盘为 JSONL，
+本模块在 ``TaskAlignedAssigner`` 上打**只读**记录补丁，把每个 batch 的
+(GT 粘连度 β_max, GT 正样本数 n_pos, GT 面积) 落盘为 JSONL，
 供 ``scripts/diagnose_adhesion.py`` 离线统计。
 
-启用方式（环境变量）::
-
-    ADEA_DIAG=1 ADEA_DIAG_OUT=runs/diag/assign_stats.jsonl yolo detect train ...
+⚠️ ultralytics 8.4.x 的 API（实测）
+-----------------------------------
+* 8.3.x：分配入口是 ``TaskAlignedAssigner.assign(...)``；
+* **8.4.184**：重构为 ``nn.Module``，分配入口是 ``forward(...)``，
+  独占分配发生在 ``select_highest_overlaps(...)``。
+  → 采集补丁必须挂在 ``select_highest_overlaps`` 上，否则**静默失效**。
 
 设计约束
 --------
-* **只记录、不改行为**：记录层不改变分配结果，可与 ALA 同时开启
-  （但做 G0 检验时应关闭 ALA，否则测的是修复后的分布）。
-* 写盘采用**追加 + 行缓冲**，训练中断也不丢已完成的部分。
+* **只记录、不改行为**：记录层不改变分配结果；
+* **必须与 ALA 互斥**：做 G0 检验时要测的是**未修复**的分布，
+  因此采集时须保持 ``ADEA_ALA=0``（ALA 开启时测到的是修复后的分布）。
 """
 
 from __future__ import annotations
@@ -46,7 +49,7 @@ def diag_path() -> Optional[Path]:
 
 
 def _adhesion(a, b) -> float:
-    """xyxy 框的粘连系数 β = |A∩B| / |A∪B|。"""
+    """xyxy 框的粘连系数 β = |A∩B| / |A∪B|（Pest24 论文定义；数值上等同 IoU）。"""
     ix1 = max(a[0], b[0])
     iy1 = max(a[1], b[1])
     ix2 = min(a[2], b[2])
@@ -67,74 +70,84 @@ def record_assignment(
     beta_thr: float = 0.05,
     batch_idx: int = 0,
 ) -> Dict[str, Any]:
-    """记录一次 assign 调用的统计量。
+    """记录一次 assign 的统计量（逐 batch 元素）。
 
     Parameters
     ----------
     target_gt_idx:
-        (num_anchors,) 每个 anchor 归属的 GT 下标（-1 为背景）。
+        (b, num_anchors) 每个 anchor 归属的 GT 下标。
     fg_mask:
-        (num_anchors,) 正样本掩码。
+        (b, num_anchors) 正样本掩码。
     gt_bboxes:
-        (num_gt, 4) GT 框（xyxy，像素）。
+        (b, n_max_boxes, 4) GT 框（xyxy，像素）。
     beta_thr:
         判定"非忽略粘连"的阈值。
 
     Returns
     -------
     dict
-        本次调用的统计（同时会被追加写入 JSONL）。
+        本次调用的统计（同时追加写入 JSONL）。
     """
-    n_gt = int(gt_bboxes.shape[0]) if gt_bboxes is not None else 0
-    n_pos = [0] * n_gt
-    if n_gt:
-        idx = target_gt_idx.detach().cpu().tolist()
-        mask = fg_mask.detach().cpu().tolist() if fg_mask is not None else [1] * len(idx)
-        for a, m in zip(idx, mask):
-            if m and a is not None and 0 <= a < n_gt:
-                n_pos[a] += 1
+    n_b = int(target_gt_idx.shape[0])
+    per_batch: List[Dict[str, Any]] = []
 
-    beta_max = [0.0] * n_gt
-    beta_nn = [0.0] * n_gt
-    if n_gt > 1:
-        boxes = [tuple(float(v) for v in b) for b in gt_bboxes.detach().cpu().tolist()]
+    for b in range(n_b):
+        tgi = target_gt_idx[b].detach().cpu().tolist()
+        fg = fg_mask[b].detach().cpu().bool().tolist()
+        gtb = gt_bboxes[b].detach().cpu().tolist()
+        n_gt = len(gtb)
+
+        counts = [0] * n_gt
+        for t, m in zip(tgi, fg):
+            if m and 0 <= t < n_gt:
+                counts[t] += 1
+
+        boxes = [tuple(float(v) for v in g) for g in gtb]
+        beta_max = [0.0] * n_gt
         for i in range(n_gt):
             best = 0.0
             for j in range(n_gt):
                 if i == j:
                     continue
-                b = _adhesion(boxes[i], boxes[j])
-                if b > best:
-                    best = b
+                v = _adhesion(boxes[i], boxes[j])
+                if v > best:
+                    best = v
             beta_max[i] = best
-            beta_nn[i] = 1.0 if best > beta_thr else 0.0
 
-    areas = []
-    if n_gt:
-        for b in gt_bboxes.detach().cpu().tolist():
-            areas.append(max(0.0, float(b[2]) - float(b[0])) * max(0.0, float(b[3]) - float(b[1])))
+        areas = [
+            max(0.0, g[2] - g[0]) * max(0.0, g[3] - g[1]) for g in gtb
+        ]
 
-    rec = {
-        "batch": int(batch_idx),
-        "n_gt": n_gt,
-        "n_pos": n_pos,
-        "beta_max": beta_max,
-        "beta_nn": beta_nn,
-        "areas": areas,
-    }
+        per_batch.append(
+            {
+                "batch": int(batch_idx),
+                "b": b,
+                "n_gt": n_gt,
+                "n_pos": counts,
+                "beta_max": beta_max,
+                "beta_nn": [1.0 if v > beta_thr else 0.0 for v in beta_max],
+                "areas": areas,
+            }
+        )
 
     p = diag_path()
     if p is not None:
         try:
             with p.open("a", encoding="utf-8") as f:
-                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+                for rec in per_batch:
+                    f.write(json.dumps(rec, ensure_ascii=False) + "\n")
         except Exception:
             pass
-    return rec
+    return {"n_batches": 1, "records": per_batch}
 
 
 def install_diagnostics() -> Dict[str, str]:
-    """安装只读记录补丁。返回接线报告。"""
+    """安装只读记录补丁。返回接线报告。
+
+    补丁点（ultralytics 8.4.x）：
+    * ``get_pos_mask`` —— 暂存 ``gt_bboxes``（后续算 GT 间粘连度需要）；
+    * ``select_highest_overlaps`` —— 记录分配结果（**只读**，不改行为）。
+    """
     if not is_enabled():
         return {"diagnostics": "skipped (ADEA_DIAG=0)"}
 
@@ -146,27 +159,33 @@ def install_diagnostics() -> Dict[str, str]:
     if getattr(TaskAlignedAssigner, "_adea_diag_patched", False):
         return {"diagnostics": "already patched"}
 
-    orig_assign = TaskAlignedAssigner.assign
     counter = {"n": 0}
 
-    def patched_assign(self, *args, **kwargs):
-        result = orig_assign(self, *args, **kwargs)
+    orig_get_pos_mask = TaskAlignedAssigner.get_pos_mask
+
+    def patched_get_pos_mask(self, pd_scores, pd_bboxes, gt_labels, gt_bboxes, anc_points, mask_gt, **extra):
+        self._adea_gt_bboxes = gt_bboxes
+        self._adea_mask_gt = mask_gt
+        return orig_get_pos_mask(
+            self, pd_scores, pd_bboxes, gt_labels, gt_bboxes, anc_points, mask_gt, **extra
+        )
+
+    orig_select = TaskAlignedAssigner.select_highest_overlaps
+
+    def patched_select(self, mask_pos, overlaps, n_max_boxes, align_metric):
+        target_gt_idx, fg_mask, mask_pos_out = orig_select(
+            self, mask_pos, overlaps, n_max_boxes, align_metric
+        )
         try:
-            gt_idx, fg_mask, target_gt_idx = result[0], result[1], result[2]
-            gt_bboxes = None
-            for a in args:
-                if hasattr(a, "shape") and len(a.shape) == 2 and a.shape[-1] == 4:
-                    if gt_bboxes is None:
-                        gt_bboxes = a
-            if gt_bboxes is None and len(args) >= 3:
-                gt_bboxes = args[2]
-            if gt_bboxes is not None and len(gt_bboxes) > 0:
+            gt_bboxes = getattr(self, "_adea_gt_bboxes", None)
+            if gt_bboxes is not None and gt_bboxes.shape[1] > 0:
                 record_assignment(target_gt_idx, fg_mask, gt_bboxes, batch_idx=counter["n"])
                 counter["n"] += 1
         except Exception:
             pass
-        return result
+        return target_gt_idx, fg_mask, mask_pos_out
 
-    TaskAlignedAssigner.assign = patched_assign
+    TaskAlignedAssigner.get_pos_mask = patched_get_pos_mask
+    TaskAlignedAssigner.select_highest_overlaps = patched_select
     TaskAlignedAssigner._adea_diag_patched = True
     return {"diagnostics": f"patched (read-only) -> {diag_path()}"}

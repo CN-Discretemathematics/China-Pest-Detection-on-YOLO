@@ -386,7 +386,7 @@ def patch_assigner(cfg: ADEAConfig) -> Dict[str, str]:
         return report
 
     from ultralytics_ext.assign.ala import ALAConfig, apply_ala_assign
-    from ultralytics_ext.assign.dla import DLAConfig, per_gt_quota
+    from ultralytics_ext.assign.dla import DLAConfig, per_gt_quota, xyxy_to_xywh_list
 
     ala_cfg = ALAConfig(
         enabled=cfg.ala_enabled,
@@ -429,12 +429,22 @@ def patch_assigner(cfg: ADEAConfig) -> Dict[str, str]:
                 return target_gt_idx, fg_mask, mask_pos_out
 
             # 密度配额调制：**按 batch 组织**（每个 batch 元素一个逐 GT 配额 list）
+            # ⚠️ 两点必须注意：
+            #   1) gt_bboxes 是 **xyxy**，而 per_gt_quota 内部按 **xywh**（中心在 b[0],b[1]）
+            #      解释 → 不转换会把密度采样在框的左上角而非中心；
+            #   2) gt_bboxes 是**填充后**的（每张图补齐到 n_max_boxes），
+            #      零填充行会污染密度场 → 只取 mask_gt 标记的有效 GT。
             per_gt_qmin = None
             if cfg.dla_enabled:
+                mask_gt = getattr(self, "_adea_mask_gt", None)
                 per_gt_qmin = []
                 for b in range(gt_bboxes.shape[0]):
+                    gtb = gt_bboxes[b].detach().cpu().tolist()
+                    if mask_gt is not None:
+                        valid = mask_gt[b].reshape(-1).bool().detach().cpu().tolist()
+                        gtb = [g for g, v in zip(gtb, valid) if v]
                     per_gt_qmin.append(
-                        per_gt_quota(gt_bboxes[b].detach().cpu().tolist(), cfg.ala_q_min, dla_cfg)
+                        per_gt_quota(xyxy_to_xywh_list(gtb), cfg.ala_q_min, dla_cfg)
                     )
 
             new_tgi, _fg, st = apply_ala_assign(
