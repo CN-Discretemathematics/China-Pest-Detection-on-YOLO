@@ -15,13 +15,13 @@ ADEA 通过**环境变量**配置（Ultralytics 的 CLI 会对未知键报错）
 用法::
 
     ADEA_ALA=1 python -m ultralytics_ext.train_adea detect train \
-        model=ultralytics_ext/yaml/yolo11n-strong.yaml \
+        model=ultralytics_ext/yaml/strong/yolo11n.yaml \
         data=datasets/pest24/pest24.yaml epochs=100 imgsz=640 batch=48 seed=0
 
 也可直接用 Python API::
 
     from ultralytics_ext.train_adea import run
-    run(model="ultralytics_ext/yaml/yolo11n-strong.yaml",
+    run(model="ultralytics_ext/yaml/strong/yolo11n.yaml",
         data="datasets/pest24/pest24.yaml", epochs=100, imgsz=640, batch=48, seed=0)
 """
 
